@@ -156,14 +156,14 @@ def _existing_pr(number=12):
     )
 
 
-def _pr_details(number=12, *, mergeable="MERGEABLE", reviews=None):
+def _pr_details(number=12, *, mergeable="MERGEABLE", review_decision="", reviews=None):
     return json.dumps(
         {
             "number": number,
             "url": f"https://github.com/acme/demo/pull/{number}",
             "state": "OPEN",
             "mergeable": mergeable,
-            "reviewDecision": "",
+            "reviewDecision": review_decision,
             "reviews": reviews or [],
         }
     )
@@ -619,6 +619,101 @@ def test_pr_runner_filters_seen_feedback_keys(tmp_path):
     assert result.feedback == []
     assert result.artifact_path == ""
     assert Path(result.complete_artifact_path).exists()
+    fake.assert_exhausted()
+
+
+def test_pr_runner_keeps_seen_ci_failure_visible_while_still_failing(tmp_path):
+    worktree, completed, review = _worktree(tmp_path)
+    fake = StrictFakeCommands(
+        [
+            (_push("bd-1/run-1"), ""),
+            (_list_prs("bd-1/run-1"), _existing_pr(12)),
+            (_edit_pr(worktree, 12), ""),
+            (_view_pr(12), _pr_details(12)),
+            (
+                _checks(12),
+                CommandResult(
+                    1,
+                    json.dumps(
+                        [
+                            {
+                                "name": "pytest",
+                                "bucket": "fail",
+                                "state": "FAILURE",
+                                "link": "https://ci.example/fail",
+                                "description": "tests still failed",
+                            }
+                        ]
+                    ),
+                    "",
+                    _checks(12),
+                ),
+            ),
+            (_review_comments(12), "[]"),
+            (_issue_comments(12), "[]"),
+        ]
+    )
+
+    result = _publish_and_monitor(
+        PrRunner(pr_command="gh", command_runner=fake, sleeper=lambda _: None),
+        worktree,
+        completed,
+        review,
+        seen_feedback_keys={"ci:pytest"},
+    )
+
+    assert [item.key for item in result.feedback] == ["ci:pytest"]
+    assert Path(result.artifact_path).exists()
+    assert result.complete_artifact_path == ""
+    fake.assert_exhausted()
+
+
+def test_pr_runner_keeps_seen_mergeability_blocker_visible_while_still_blocking(tmp_path):
+    worktree, _, _ = _worktree(tmp_path)
+    fake = StrictFakeCommands(
+        [
+            (_view_pr(12), _pr_details(12, mergeable="CONFLICTING")),
+            (_checks(12), _passing_checks()),
+            (_review_comments(12), "[]"),
+            (_issue_comments(12), "[]"),
+        ]
+    )
+
+    result = _monitor(
+        PrRunner(pr_command="gh", command_runner=fake, sleeper=lambda _: None),
+        worktree,
+        PrPublication(number=12, url="https://github.com/acme/demo/pull/12", state="OPEN"),
+        seen_feedback_keys={"mergeability:CONFLICTING"},
+    )
+
+    assert result.merge_conflict is True
+    assert [item.key for item in result.feedback] == ["mergeability:CONFLICTING"]
+    assert Path(result.artifact_path).exists()
+    assert result.complete_artifact_path == ""
+    fake.assert_exhausted()
+
+
+def test_pr_runner_reports_changes_requested_review_decision_without_review_body(tmp_path):
+    worktree, _, _ = _worktree(tmp_path)
+    fake = StrictFakeCommands(
+        [
+            (_view_pr(12), _pr_details(12, review_decision="CHANGES_REQUESTED")),
+            (_checks(12), _passing_checks()),
+            (_review_comments(12), "[]"),
+            (_issue_comments(12), "[]"),
+        ]
+    )
+
+    result = _monitor(
+        PrRunner(pr_command="gh", command_runner=fake, sleeper=lambda _: None),
+        worktree,
+        PrPublication(number=12, url="https://github.com/acme/demo/pull/12", state="OPEN"),
+    )
+
+    assert [item.key for item in result.feedback] == ["review-decision:CHANGES_REQUESTED"]
+    assert result.feedback[0].source == "review-decision"
+    assert "CHANGES_REQUESTED" in result.feedback[0].body
+    assert result.complete_artifact_path == ""
     fake.assert_exhausted()
 
 

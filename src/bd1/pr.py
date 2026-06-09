@@ -184,7 +184,9 @@ class PrRunner:
         feedback.extend(self._feedback_from_reviews(details))
         feedback.extend(self._feedback_from_review_comments(review_comments))
         feedback.extend(self._feedback_from_issue_comments(issue_comments))
-        filtered_feedback = [item for item in feedback if item.key not in seen_feedback_keys]
+        filtered_feedback = [
+            item for item in feedback if _should_emit_feedback(item, seen_feedback_keys)
+        ]
 
         artifact_path = ""
         complete_artifact_path = ""
@@ -454,6 +456,18 @@ class PrRunner:
                     created_at=str(review.get("submittedAt", "") or ""),
                     updated_at=str(review.get("submittedAt", "") or ""),
                     commit_id=commit_id,
+                )
+            )
+        if str(details.get("reviewDecision", "")) == "CHANGES_REQUESTED" and not feedback:
+            feedback.append(
+                PrFeedbackItem(
+                    key="review-decision:CHANGES_REQUESTED",
+                    source="review-decision",
+                    author="github",
+                    body="GitHub reviewDecision is CHANGES_REQUESTED, but no review body was available.",
+                    path="",
+                    url=str(details.get("url", "") or ""),
+                    required_action="Inspect the PR review state and address requested changes.",
                 )
             )
         return feedback
@@ -752,6 +766,12 @@ def _check_status(check: PrCheck | None) -> str:
     if check is None:
         return ""
     return check.state or check.bucket
+
+
+def _should_emit_feedback(item: PrFeedbackItem, seen_feedback_keys: set[str]) -> bool:
+    if item.source in {"ci", "mergeability", "review-decision"}:
+        return True
+    return item.key not in seen_feedback_keys
 
 
 def _md(value: str) -> str:
