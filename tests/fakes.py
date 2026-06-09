@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bd1.artifacts import write_text
 from bd1.dspy_programs import DiscoveryOutput, LearningOutput, PlanOutput, ReviewOutput
 from bd1.pi import PiResult
+from bd1.pr import PrCheck, PrPublication, PrResult
 from bd1.subprocesses import CommandResult
 from bd1.vet import VetResult
 
@@ -185,4 +186,63 @@ class FakeVetRunner:
             stderr_path=stderr_path,
             output_path=output_path,
             findings_summary=summary,
+        )
+
+
+class FakePrRunner:
+    def __init__(
+        self,
+        results: list[PrResult] | None = None,
+        *,
+        publish_error: Exception | None = None,
+        monitor_error: Exception | None = None,
+    ) -> None:
+        self.results = results or [
+            PrResult(
+                number=1,
+                url="https://github.com/acme/demo/pull/1",
+                state="OPEN",
+                checks=[PrCheck("tests", "pass", "SUCCESS", "", "")],
+                feedback=[],
+                merge_conflict=False,
+                complete_artifact_path=".artifacts/pr/fix-bug-1-complete.md",
+            )
+        ]
+        self.publish_error = publish_error
+        self.monitor_error = monitor_error
+        self.publish_calls = []
+        self.monitor_calls = []
+
+    def publish_or_update(self, **kwargs) -> PrPublication:
+        self.publish_calls.append(kwargs)
+        if self.publish_error:
+            raise self.publish_error
+        result = self.results[min(len(self.publish_calls) - 1, len(self.results) - 1)]
+        return PrPublication(number=result.number, url=result.url, state=result.state)
+
+    def monitor(self, **kwargs) -> PrResult:
+        self.monitor_calls.append(kwargs)
+        if self.monitor_error:
+            raise self.monitor_error
+        result = self.results[min(len(self.monitor_calls) - 1, len(self.results) - 1)]
+        worktree = Path(kwargs["worktree"])
+        artifact_path = result.artifact_path
+        complete_artifact_path = result.complete_artifact_path
+        if result.artifact_path:
+            path = worktree / result.artifact_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                "# PR Feedback\n\n## Consolidated Resolve Prompt\n\nResolve PR feedback.\n",
+                encoding="utf-8",
+            )
+            artifact_path = str(path)
+        if result.complete_artifact_path:
+            path = worktree / result.complete_artifact_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("# PR Feedback Complete\n", encoding="utf-8")
+            complete_artifact_path = str(path)
+        return replace(
+            result,
+            artifact_path=artifact_path,
+            complete_artifact_path=complete_artifact_path,
         )

@@ -4,12 +4,20 @@ from pathlib import Path
 import pytest
 
 from bd1.config import default_workspace_config
-from bd1.errors import DirtyRepositoryError
+from bd1.errors import DirtyRepositoryError, PrError
 from bd1.git import get_status_porcelain
 from bd1.models import RunState
 from bd1.orchestrator import Orchestrator, compile_execution_prompt
+from bd1.pr import PrCheck, PrFeedbackItem, PrResult
 from bd1.run_index import RunIndex
-from tests.fakes import FakePiBehavior, FakePiRunner, FakeReasoning, FakeSetupRunner, FakeVetRunner
+from tests.fakes import (
+    FakePiBehavior,
+    FakePiRunner,
+    FakePrRunner,
+    FakeReasoning,
+    FakeSetupRunner,
+    FakeVetRunner,
+)
 
 
 def make_config(repo: Path, *, max_attempts: int = 5, setup_script: str = ""):
@@ -19,6 +27,7 @@ def make_config(repo: Path, *, max_attempts: int = 5, setup_script: str = ""):
 
 def make_orchestrator(tmp_path, **overrides) -> Orchestrator:
     overrides.setdefault("reasoning", FakeReasoning(["PASS"]))
+    overrides.setdefault("pr_runner", FakePrRunner())
     return Orchestrator(global_root=tmp_path / "global", **overrides)
 
 
@@ -207,3 +216,225 @@ def test_repeated_vet_findings_max_attempts_writes_blocker(tmp_path, init_git_re
     assert json.loads(
         (Path(record.worktree) / ".sessions" / record.run_id / "run-record.json").read_text()
     )
+
+
+def test_review_pass_publishes_and_monitors_pr_before_complete(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    pr = FakePrRunner()
+    config = make_config(repo).__class__.from_dict(
+        {**make_config(repo).to_dict(), "pr_base_branch": "release", "pr_draft": True}
+    )
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(config, "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    assert record.final_verdict == "PASS"
+    assert record.pr_number == 1
+    assert record.pr_url == "https://github.com/acme/demo/pull/1"
+    assert record.pr_complete_path.endswith("fix-bug-1-complete.md")
+    transitions = (
+        Path(record.worktree) / ".sessions" / record.run_id / "transitions.jsonl"
+    ).read_text(encoding="utf-8")
+    for state in [
+        "REVIEW_PASSED",
+        "PR_PUBLISHING",
+        "PR_CREATED",
+        "PR_MONITORING",
+        "PR_READY",
+        "COMPLETE",
+    ]:
+        assert state in transitions
+    assert pr.publish_calls[0]["worktree"] == Path(record.worktree)
+    assert pr.publish_calls[0]["task"] == "Fix bug"
+    assert pr.publish_calls[0]["branch"] == record.branch
+    assert pr.publish_calls[0]["base_branch"] == "release"
+    assert pr.publish_calls[0]["run_id"] == record.run_id
+    assert pr.publish_calls[0]["base_commit"] == record.base_commit
+    assert pr.publish_calls[0]["completed_path"] == Path(record.artifacts["completed"])
+    assert pr.publish_calls[0]["review_path"] == Path(record.attempts[-1].review_path)
+    assert pr.publish_calls[0]["draft"] is True
+    assert pr.monitor_calls[0]["publication"].number == 1
+    assert pr.monitor_calls[0]["task_slug"] == "fix-bug"
+    assert pr.monitor_calls[0]["branch"] == record.branch
+    assert pr.monitor_calls[0]["feedback_number"] == 1
+    assert pr.monitor_calls[0]["wait_seconds"] == 600
+    assert pr.monitor_calls[0]["seen_feedback_keys"] == set()
+
+
+def test_pr_feedback_loops_back_to_pi_prompt_and_then_completes(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    feedback_result = PrResult(
+        number=2,
+        url="https://github.com/acme/demo/pull/2",
+        state="OPEN",
+        checks=[PrCheck("tests", "fail", "FAILURE", "", "failed")],
+        feedback=[
+            PrFeedbackItem(
+                key="ci:tests",
+                source="ci",
+                author="github",
+                body="failed",
+                path="tests",
+                url="",
+                required_action="Fix tests.",
+            )
+        ],
+        merge_conflict=False,
+        artifact_path=".artifacts/pr/fix-bug-1.md",
+    )
+    complete_result = PrResult(
+        number=2,
+        url="https://github.com/acme/demo/pull/2",
+        state="OPEN",
+        checks=[PrCheck("tests", "pass", "SUCCESS", "", "")],
+        feedback=[],
+        merge_conflict=False,
+        complete_artifact_path=".artifacts/pr/fix-bug-2-complete.md",
+    )
+    pi = FakePiRunner()
+    pr = FakePrRunner([feedback_result, complete_result])
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS", "PASS"]),
+        pi_runner=pi,
+        vet_runner=FakeVetRunner([0, 0]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    assert len(record.attempts) == 2
+    assert len(pr.publish_calls) == 2
+    assert len(pr.monitor_calls) == 2
+    assert record.pr_feedback_paths == [str(Path(record.worktree) / ".artifacts/pr/fix-bug-1.md")]
+    assert record.pr_complete_path.endswith("fix-bug-2-complete.md")
+    assert record.pr_seen_feedback_keys == ["ci:tests"]
+    assert "Resolve PR feedback" in pi.prompts[1]
+
+
+def test_pr_feedback_max_attempts_blocks(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    feedback_result = PrResult(
+        number=3,
+        url="https://github.com/acme/demo/pull/3",
+        state="OPEN",
+        checks=[PrCheck("tests", "fail", "FAILURE", "", "failed")],
+        feedback=[
+            PrFeedbackItem(
+                key="ci:tests",
+                source="ci",
+                author="github",
+                body="failed",
+                path="tests",
+                url="",
+                required_action="Fix tests.",
+            ),
+        ],
+        merge_conflict=False,
+        artifact_path=".artifacts/pr/fix-bug-1.md",
+    )
+    pr = FakePrRunner([feedback_result, feedback_result])
+    config = make_config(repo, max_attempts=5).__class__.from_dict(
+        {**make_config(repo, max_attempts=5).to_dict(), "max_pr_feedback_attempts": 1}
+    )
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS", "PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0, 0]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(config, "Fix bug")
+
+    assert record.state is RunState.BLOCKED
+    assert "Max PR feedback attempts reached" in Path(record.blocker_path).read_text(
+        encoding="utf-8"
+    )
+
+
+def test_pr_seen_feedback_keys_pass_into_monitor_and_update_from_feedback(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    feedback_result = PrResult(
+        number=4,
+        url="https://github.com/acme/demo/pull/4",
+        state="OPEN",
+        checks=[],
+        feedback=[
+            PrFeedbackItem(
+                key="review:1",
+                source="review",
+                author="reviewer",
+                body="Please adjust this.",
+                path="src/app.py",
+                url="https://github.com/acme/demo/pull/4#discussion_r1",
+                required_action="Address review comment.",
+            )
+        ],
+        merge_conflict=False,
+        artifact_path=".artifacts/pr/fix-bug-1.md",
+    )
+    complete_result = PrResult(
+        number=4,
+        url="https://github.com/acme/demo/pull/4",
+        state="OPEN",
+        checks=[],
+        feedback=[],
+        merge_conflict=False,
+        complete_artifact_path=".artifacts/pr/fix-bug-2-complete.md",
+    )
+    pr = FakePrRunner([feedback_result, complete_result])
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS", "PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0, 0]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert pr.monitor_calls[0]["seen_feedback_keys"] == set()
+    assert pr.monitor_calls[1]["seen_feedback_keys"] == {"review:1"}
+    assert record.pr_seen_feedback_keys == ["review:1"]
+
+
+@pytest.mark.parametrize(
+    ("phase", "expected_title"),
+    [
+        ("publish", "PR failed"),
+        ("monitor", "PR monitoring failed"),
+    ],
+)
+def test_pr_publishing_or_monitoring_bd1_error_blocks_cleanly(
+    tmp_path, init_git_repo, phase, expected_title
+):
+    repo = init_git_repo(tmp_path / "repo")
+    error = PrError(f"{phase} exploded")
+    pr = (
+        FakePrRunner(publish_error=error)
+        if phase == "publish"
+        else FakePrRunner(monitor_error=error)
+    )
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.BLOCKED
+    blocker = Path(record.blocker_path).read_text(encoding="utf-8")
+    assert expected_title in blocker
+    assert f"{phase} exploded" in blocker

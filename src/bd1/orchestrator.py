@@ -5,6 +5,7 @@ from pathlib import Path
 
 from bd1.artifacts import ensure_workspace_dirs, write_text
 from bd1.dspy_programs import DspyReasoningPrograms, ReasoningPrograms
+from bd1.errors import Bd1Error
 from bd1.evidence import EvidencePackage, collect_evidence
 from bd1.git import (
     create_worktree,
@@ -15,10 +16,14 @@ from bd1.git import (
     get_status_porcelain,
     git,
 )
+from bd1.git import (
+    default_branch as git_default_branch,
+)
 from bd1.learning import ExampleStore
 from bd1.models import AttemptRecord, RunRecord, RunState, WorkspaceConfig
 from bd1.paths import global_state_dir, make_run_id, slugify
 from bd1.pi import PiResult, PiRunner
+from bd1.pr import PrPublication, PrResult, PrRunner
 from bd1.run_store import RunStore, now_iso
 from bd1.setup_runner import SetupRunner
 from bd1.vet import VetResult, VetRunner
@@ -78,6 +83,7 @@ class Orchestrator:
         setup_runner: SetupRunner | None = None,
         pi_runner: PiRunner | None = None,
         vet_runner: VetRunner | None = None,
+        pr_runner: PrRunner | None = None,
         run_store: RunStore | None = None,
     ) -> None:
         self.global_root = Path(global_root) if global_root else global_state_dir()
@@ -85,6 +91,7 @@ class Orchestrator:
         self.setup_runner = setup_runner or SetupRunner()
         self.pi_runner = pi_runner or PiRunner()
         self.vet_runner = vet_runner or VetRunner()
+        self.pr_runner = pr_runner or PrRunner()
         self.run_store = run_store or RunStore(self.global_root)
 
     def run(self, config: WorkspaceConfig, task: str) -> RunRecord:
@@ -152,6 +159,7 @@ class Orchestrator:
         record = self._transition(worktree, record, RunState.PLAN_COMPLETE, "plan complete")
 
         revision_prompt = ""
+        pr_feedback_attempts = 0
         for attempt_number in range(1, config.max_attempts + 1):
             attempt_dir = run_dir / f"attempt-{attempt_number}"
             prompt_path = attempt_dir / "prompt.md"
@@ -325,9 +333,72 @@ class Orchestrator:
             record = self._transition(worktree, record, RunState.REVIEW_PASSED, "review passed")
             record = replace(
                 record,
-                final_verdict="PASS",
                 artifacts={**record.artifacts, "completed": str(completed_path)},
             )
+            self.run_store.write(worktree, record)
+
+            record = self._transition(worktree, record, RunState.PR_PUBLISHING, "publishing PR")
+            try:
+                publication = self.pr_runner.publish_or_update(
+                    worktree=worktree,
+                    task=task,
+                    branch=branch,
+                    base_branch=config.pr_base_branch
+                    or config.default_branch
+                    or git_default_branch(repo),
+                    run_id=run_id,
+                    base_commit=base_commit,
+                    completed_path=completed_path,
+                    review_path=review_path,
+                    draft=config.pr_draft,
+                )
+            except Bd1Error as exc:
+                return self._block(worktree, record, "PR failed", str(exc), evidence)
+
+            record = self._record_pr_publication(worktree, record, publication)
+            record = self._transition(
+                worktree, record, RunState.PR_CREATED, f"PR #{publication.number}"
+            )
+
+            record = self._transition(worktree, record, RunState.PR_MONITORING, "monitoring PR")
+            try:
+                pr_result = self.pr_runner.monitor(
+                    worktree=worktree,
+                    task=task,
+                    task_slug=task_slug,
+                    publication=publication,
+                    branch=branch,
+                    feedback_number=pr_feedback_attempts + 1,
+                    wait_seconds=config.pr_monitor_wait_seconds,
+                    seen_feedback_keys=set(record.pr_seen_feedback_keys),
+                )
+            except Bd1Error as exc:
+                return self._block(worktree, record, "PR monitoring failed", str(exc), evidence)
+
+            record = self._record_pr_result(worktree, record, pr_result)
+
+            if pr_result.feedback:
+                pr_feedback_attempts += 1
+                if pr_feedback_attempts > config.max_pr_feedback_attempts:
+                    return self._block(
+                        worktree,
+                        record,
+                        "Max PR feedback attempts reached",
+                        f"Max PR feedback attempts reached ({config.max_pr_feedback_attempts}).",
+                        evidence,
+                    )
+                record = self._transition(
+                    worktree,
+                    record,
+                    RunState.PR_FEEDBACK_RECEIVED,
+                    f"PR feedback artifact written: {pr_result.artifact_path}",
+                )
+                self._record_learning(worktree, evidence, record, "pr feedback")
+                revision_prompt = Path(pr_result.artifact_path).read_text(encoding="utf-8")
+                continue
+
+            record = self._transition(worktree, record, RunState.PR_READY, "PR feedback complete")
+            record = replace(record, final_verdict="PASS")
             self.run_store.write(worktree, record)
             self._record_learning(worktree, evidence, record, "pass")
             record = self._transition(worktree, record, RunState.COMPLETE, "complete")
@@ -359,6 +430,35 @@ class Orchestrator:
         attempts = list(record.attempts)
         attempts[-1] = replace(attempts[-1], review_path=review_path, review_verdict=verdict)
         updated = replace(record, attempts=attempts)
+        self.run_store.write(worktree, updated)
+        return updated
+
+    def _record_pr_publication(
+        self, worktree: Path, record: RunRecord, publication: PrPublication
+    ) -> RunRecord:
+        updated = replace(record, pr_number=publication.number, pr_url=publication.url)
+        self.run_store.write(worktree, updated)
+        return updated
+
+    def _record_pr_result(
+        self, worktree: Path, record: RunRecord, pr_result: PrResult
+    ) -> RunRecord:
+        feedback_paths = list(record.pr_feedback_paths)
+        if pr_result.artifact_path:
+            feedback_paths.append(pr_result.artifact_path)
+        seen_feedback_keys = list(
+            dict.fromkeys(
+                [*record.pr_seen_feedback_keys, *(item.key for item in pr_result.feedback)]
+            )
+        )
+        updated = replace(
+            record,
+            pr_number=pr_result.number,
+            pr_url=pr_result.url,
+            pr_feedback_paths=feedback_paths,
+            pr_complete_path=pr_result.complete_artifact_path or record.pr_complete_path,
+            pr_seen_feedback_keys=seen_feedback_keys,
+        )
         self.run_store.write(worktree, updated)
         return updated
 
