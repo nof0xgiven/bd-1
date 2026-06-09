@@ -79,6 +79,10 @@ def _redact_key_value(match: re.Match[str]) -> str:
     return f"{match.group('prefix')}[REDACTED]"
 
 
+def redact_data(data: Any) -> Any:
+    return _redact_json_data(data)
+
+
 def _redact_json_data(data: Any, *, key: str | None = None) -> Any:
     if key is not None and _is_secret_key(key):
         return "[REDACTED]"
