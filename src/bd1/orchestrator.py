@@ -29,6 +29,7 @@ RUNTIME_EXCLUDES = (
     ".artifacts/plans/",
     ".artifacts/vet/",
     ".artifacts/reviews/",
+    ".artifacts/pr/",
     ".artifacts/blockers/",
     ".artifacts/completed/",
     ".artifacts/learning/",

@@ -21,6 +21,11 @@ class RunState(StrEnum):
     REVIEW_RUNNING = "REVIEW_RUNNING"
     REVIEW_FAILED = "REVIEW_FAILED"
     REVIEW_PASSED = "REVIEW_PASSED"
+    PR_PUBLISHING = "PR_PUBLISHING"
+    PR_CREATED = "PR_CREATED"
+    PR_MONITORING = "PR_MONITORING"
+    PR_FEEDBACK_RECEIVED = "PR_FEEDBACK_RECEIVED"
+    PR_READY = "PR_READY"
     LEARNING_RUNNING = "LEARNING_RUNNING"
     COMPLETE = "COMPLETE"
     BLOCKED = "BLOCKED"
@@ -46,13 +51,25 @@ class WorkspaceConfig:
     require_clean_committed_attempt: bool
     dirty_exit_prompt: str
     worktree_root_policy: str
+    pr_command: str = "gh"
+    pr_monitor_wait_seconds: int = 600
+    max_pr_feedback_attempts: int = 3
+    pr_base_branch: str = ""
+    pr_draft: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkspaceConfig:
-        return cls(**data)
+        defaults = {
+            "pr_command": "gh",
+            "pr_monitor_wait_seconds": 600,
+            "max_pr_feedback_attempts": 3,
+            "pr_base_branch": "",
+            "pr_draft": False,
+        }
+        return cls(**{**defaults, **data})
 
 
 @dataclass(frozen=True)
@@ -95,6 +112,11 @@ class RunRecord:
     final_verdict: str = ""
     blocker_path: str = ""
     feedback_paths: list[str] = field(default_factory=list)
+    pr_number: int | None = None
+    pr_url: str = ""
+    pr_feedback_paths: list[str] = field(default_factory=list)
+    pr_complete_path: str = ""
+    pr_seen_feedback_keys: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -119,6 +141,11 @@ class RunRecord:
             final_verdict=data.get("final_verdict", ""),
             blocker_path=data.get("blocker_path", ""),
             feedback_paths=list(data.get("feedback_paths", [])),
+            pr_number=data.get("pr_number"),
+            pr_url=data.get("pr_url", ""),
+            pr_feedback_paths=list(data.get("pr_feedback_paths", [])),
+            pr_complete_path=data.get("pr_complete_path", ""),
+            pr_seen_feedback_keys=list(data.get("pr_seen_feedback_keys", [])),
         )
 
 

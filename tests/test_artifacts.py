@@ -18,6 +18,7 @@ def test_workspace_dirs_include_full_storage_contract(tmp_path):
         ".artifacts/completed",
         ".artifacts/vet",
         ".artifacts/reviews",
+        ".artifacts/pr",
         ".artifacts/blockers",
         ".artifacts/learning",
         ".learning/learnings",

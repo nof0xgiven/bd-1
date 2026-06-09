@@ -11,6 +11,7 @@ WORKSPACE_DIRS = [
     ".artifacts/completed",
     ".artifacts/vet",
     ".artifacts/reviews",
+    ".artifacts/pr",
     ".artifacts/blockers",
     ".artifacts/learning",
     ".learning/learnings",

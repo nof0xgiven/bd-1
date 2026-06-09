@@ -1,3 +1,4 @@
+from bd1.config import default_workspace_config
 from bd1.models import (
     AttemptRecord,
     FeedbackRecord,
@@ -41,6 +42,20 @@ def test_workspace_config_round_trips():
     assert WorkspaceConfig.from_dict(config.to_dict()) == config
 
 
+def test_workspace_config_preserves_pr_lifecycle_fields():
+    config = default_workspace_config("demo", "/tmp/repo", "Demo")
+
+    assert config.pr_command == "gh"
+    assert config.pr_monitor_wait_seconds == 600
+    assert config.max_pr_feedback_attempts == 3
+    assert config.pr_base_branch == ""
+    assert config.pr_draft is False
+
+    restored = WorkspaceConfig.from_dict(config.to_dict())
+
+    assert restored == config
+
+
 def test_run_record_preserves_typed_nested_records():
     attempt = AttemptRecord(
         number=1,
@@ -79,6 +94,51 @@ def test_run_record_preserves_typed_nested_records():
     assert restored == record
     assert restored.state is RunState.COMPLETE
     assert restored.attempts[0] == attempt
+
+
+def test_run_record_preserves_pr_metadata_fields():
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="abc123",
+        branch="bd-1/run-1",
+        worktree="/tmp/worktree",
+        state=RunState.PR_READY,
+        created_at="2026-06-09T00:00:00Z",
+        updated_at="2026-06-09T00:00:01Z",
+        pr_number=42,
+        pr_url="https://github.com/acme/demo/pull/42",
+        pr_feedback_paths=[".artifacts/pr/fix-bug-1.md"],
+        pr_complete_path=".artifacts/pr/fix-bug-1-complete.md",
+        pr_seen_feedback_keys=["ci:pytest", "review:123"],
+    )
+
+    restored = RunRecord.from_dict(record.to_dict())
+
+    assert restored == record
+
+
+def test_run_record_loads_existing_files_without_pr_fields():
+    record = RunRecord.from_dict(
+        {
+            "run_id": "run-1",
+            "workspace": "demo",
+            "task": "Fix bug",
+            "base_commit": "abc123",
+            "branch": "bd-1/run-1",
+            "worktree": "/tmp/worktree",
+            "state": "COMPLETE",
+            "created_at": "2026-06-09T00:00:00Z",
+            "updated_at": "2026-06-09T00:00:01Z",
+        }
+    )
+
+    assert record.pr_number is None
+    assert record.pr_url == ""
+    assert record.pr_feedback_paths == []
+    assert record.pr_complete_path == ""
+    assert record.pr_seen_feedback_keys == []
 
 
 def test_feedback_and_learning_records_round_trip():

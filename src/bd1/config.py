@@ -37,6 +37,11 @@ def default_workspace_config(
         require_clean_committed_attempt=True,
         dirty_exit_prompt="commit and resolve before exit",
         worktree_root_policy="global",
+        pr_command="gh",
+        pr_monitor_wait_seconds=600,
+        max_pr_feedback_attempts=3,
+        pr_base_branch="",
+        pr_draft=False,
     )
 
 

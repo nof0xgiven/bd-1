@@ -16,3 +16,7 @@ class WorkspaceConfigError(Bd1Error):
 
 class RunBlockedError(Bd1Error):
     """Raised when a run cannot continue without human action."""
+
+
+class PrError(Bd1Error):
+    """Raised when PR publishing or monitoring fails."""
