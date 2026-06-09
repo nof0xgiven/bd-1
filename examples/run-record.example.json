@@ -1,0 +1,26 @@
+{
+  "run_id": "run_2026_06_09_add_webhook_retry",
+  "task": "Add webhook retry behavior",
+  "workspace": "kahunas-api",
+  "base_commit": "abc123",
+  "branch": "compound/add-webhook-retry",
+  "state": "LEARNING_COMPLETE",
+  "created_at": "2026-06-09T00:00:00Z",
+  "updated_at": "2026-06-09T01:10:00Z",
+  "artifacts": {
+    "context": ".artifacts/context/add-webhook-retry.md",
+    "plan": ".artifacts/plans/add-webhook-retry.md",
+    "completed": ".artifacts/completed/add-webhook-retry.md"
+  },
+  "attempts": [
+    {
+      "attempt": 1,
+      "pi_session": ".sessions/run_2026_06_09_add_webhook_retry/pi-session.txt",
+      "vet_output": ".sessions/run_2026_06_09_add_webhook_retry/vet-output.txt",
+      "review": ".artifacts/reviews/add-webhook-retry-01-pass.md",
+      "verdict": "PASS"
+    }
+  ],
+  "final_pr_url": "https://github.com/example/repo/pull/123",
+  "merged_at": "2026-06-09T01:05:00Z"
+}

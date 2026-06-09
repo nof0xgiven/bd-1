@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorkspaceArtifacts",
+  "type": "object",
+  "required": [
+    "architecture",
+    "system_patterns",
+    "testing",
+    "design",
+    "rules",
+    "product"
+  ],
+  "properties": {
+    "architecture": {
+      "type": "string"
+    },
+    "system_patterns": {
+      "type": "string"
+    },
+    "testing": {
+      "type": "string"
+    },
+    "design": {
+      "type": "string"
+    },
+    "rules": {
+      "type": "string"
+    },
+    "product": {
+      "type": "string"
+    }
+  }
+}

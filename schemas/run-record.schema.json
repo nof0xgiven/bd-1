@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunRecord",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task",
+    "workspace",
+    "base_commit",
+    "branch",
+    "state",
+    "artifacts",
+    "attempts"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "task": {
+      "type": "string"
+    },
+    "workspace": {
+      "type": "string"
+    },
+    "base_commit": {
+      "type": "string"
+    },
+    "branch": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "attempts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "attempt": {
+            "type": "integer"
+          },
+          "pi_session": {
+            "type": "string"
+          },
+          "vet_output": {
+            "type": "string"
+          },
+          "review": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "final_pr_url": {
+      "type": "string"
+    },
+    "merged_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

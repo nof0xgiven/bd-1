@@ -1,0 +1,31 @@
+{
+  "id": "learn_2026_06_09_webhook_integration_tests",
+  "created_at": "2026-06-09T00:00:00Z",
+  "status": "active",
+  "source_run_id": "run_2026_06_09_add_webhook_retry",
+  "source_task": "Add webhook retry behavior",
+  "category": "testing_pattern",
+  "applies_when": "Changing webhook behavior or external event handlers",
+  "rule": "Validate through the real request handler and persistence boundary, not only the service function.",
+  "rationale": "A previous implementation passed service-level checks but failed at the route/persistence integration boundary.",
+  "evidence": [
+    {
+      "artifact": ".artifacts/reviews/add-webhook-retry-01-fail.md",
+      "excerpt": "Review failed because handler path was not exercised."
+    }
+  ],
+  "avoid_when": "Pure formatting or documentation-only changes.",
+  "related_files": [
+    "src/routes/webhooks/*",
+    "src/services/webhooks/*"
+  ],
+  "tags": [
+    "webhooks",
+    "testing",
+    "integration",
+    "persistence"
+  ],
+  "confidence": 0.86,
+  "usage_count": 0,
+  "success_count": 0
+}

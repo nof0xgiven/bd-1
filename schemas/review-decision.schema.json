@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewDecision",
+  "type": "object",
+  "required": [
+    "verdict",
+    "summary",
+    "p1_critical",
+    "p2_major",
+    "p3_minor",
+    "revision_prompt"
+  ],
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "REVISE",
+        "FAIL"
+      ]
+    },
+    "summary": {
+      "type": "string"
+    },
+    "p1_critical": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "p2_major": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "p3_minor": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "revision_prompt": {
+      "type": "string"
+    }
+  }
+}
