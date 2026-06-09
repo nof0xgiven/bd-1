@@ -10,12 +10,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     _assert_project_runtime_ignores()
     repo = init_git_repo(tmp_path / "repo")
+    _git(repo, ["branch", "-M", "main"])
+    remote = tmp_path / "origin.git"
+    subprocess.run(
+        ["git", "init", "--bare", str(remote)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    _git(repo, ["remote", "add", "origin", str(remote)])
+    _git(repo, ["push", "-u", "origin", "main"])
+
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     _write_fake_pi(fake_bin / "pi")
     _write_fake_vet(fake_bin / "vet")
+    _write_fake_gh(fake_bin / "gh")
 
     env = _cli_env(tmp_path / "state", fake_bin)
+    env["BD1_FAKE_GH_STATE"] = str(tmp_path / "fake-gh-state.json")
 
     add_result = _run_cli(
         [
@@ -33,6 +46,11 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     )
     assert add_result.returncode == 0, add_result.stderr
     assert "Review and commit generated bd-1 workspace files" in add_result.stdout
+
+    config_path = repo / ".bd-1.toml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace("pr_monitor_wait_seconds = 600", "pr_monitor_wait_seconds = 0")
+    config_path.write_text(text, encoding="utf-8")
 
     status_before_commit = _git(repo, ["status", "--short", "--untracked-files=all"]).stdout
     assert ".bd-1.toml" in status_before_commit
@@ -60,6 +78,17 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     assert Path(run_record["attempts"][0]["review_path"]).exists()
     assert Path(run_record["artifacts"]["completed"]).exists()
     assert list((worktree / ".artifacts" / "learning").glob(f"{run_output['run_id']}-*.md"))
+    assert run_record["pr_number"] == 77
+    assert run_record["pr_url"] == "https://github.com/acme/demo/pull/77"
+    assert run_record["pr_complete_path"].endswith(
+        ".artifacts/pr/make-a-fixture-change-1-complete.md"
+    )
+    assert Path(run_record["pr_complete_path"]).exists()
+    assert _git(worktree, ["status", "--porcelain"]).stdout == ""
+    pushed_branch = _git(
+        remote, ["show-ref", "--verify", f"refs/heads/{run_record['branch']}"]
+    ).stdout
+    assert run_record["attempts"][0]["commit_sha"] in pushed_branch
 
     (worktree / "local.db").write_text("cache\n", encoding="utf-8")
     assert _git_check_ignore(worktree, ".sessions")
@@ -197,6 +226,44 @@ args = parser.parse_args()
 
 Path(args.output).write_text(json.dumps({{"issues": []}}), encoding="utf-8")
 print("fake vet pass")
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_fake_gh(path: Path) -> None:
+    path.write_text(
+        f"""#!{sys.executable}
+import json
+import os
+import sys
+from pathlib import Path
+
+args = sys.argv[1:]
+state = Path(os.environ["BD1_FAKE_GH_STATE"])
+payload = json.loads(state.read_text(encoding="utf-8")) if state.exists() else {{"created": False}}
+
+if args[:2] == ["pr", "list"]:
+    if payload.get("created"):
+        print(json.dumps([{{"number": 77, "url": "https://github.com/acme/demo/pull/77", "state": "OPEN"}}]))
+    else:
+        print("[]")
+elif args[:2] == ["pr", "create"]:
+    payload["created"] = True
+    state.write_text(json.dumps(payload), encoding="utf-8")
+    print("https://github.com/acme/demo/pull/77")
+elif args[:2] == ["pr", "edit"]:
+    print("")
+elif args[:2] == ["pr", "view"]:
+    print(json.dumps({{"number": 77, "url": "https://github.com/acme/demo/pull/77", "state": "OPEN", "mergeable": "MERGEABLE", "reviewDecision": "", "reviews": []}}))
+elif args[:2] == ["pr", "checks"]:
+    print(json.dumps([{{"name": "tests", "bucket": "pass", "state": "SUCCESS", "link": "", "description": ""}}]))
+elif args and args[0] == "api":
+    print("[]")
+else:
+    print(f"unsupported fake gh command: {{args}}", file=sys.stderr)
+    raise SystemExit(2)
 """,
         encoding="utf-8",
     )
