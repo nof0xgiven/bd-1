@@ -432,8 +432,10 @@ class Orchestrator:
 
 
 def _ignore_runtime_paths(worktree: Path) -> None:
-    git_dir = Path(git(worktree, ["rev-parse", "--absolute-git-dir"]).stdout.strip())
-    exclude_path = git_dir / "info" / "exclude"
+    common_dir = Path(git(worktree, ["rev-parse", "--git-common-dir"]).stdout.strip())
+    if not common_dir.is_absolute():
+        common_dir = worktree / common_dir
+    exclude_path = common_dir / "info" / "exclude"
     existing = exclude_path.read_text(encoding="utf-8") if exclude_path.exists() else ""
     lines = existing.splitlines()
     changed = False

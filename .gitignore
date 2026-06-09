@@ -10,3 +10,8 @@
 .ruff_cache/
 __pycache__/
 *.py[cod]
+
+# bd-1 runtime state
+.sessions/
+*.db
+*.sqlite
