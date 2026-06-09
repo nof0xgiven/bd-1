@@ -5,6 +5,7 @@ import pytest
 
 from bd1.config import default_workspace_config
 from bd1.errors import DirtyRepositoryError
+from bd1.git import get_status_porcelain
 from bd1.models import RunState
 from bd1.orchestrator import Orchestrator, compile_execution_prompt
 from bd1.run_index import RunIndex
@@ -99,6 +100,28 @@ def test_happy_path_persists_transitions_and_is_indexable(tmp_path, init_git_rep
     index = RunIndex(tmp_path / "runs.db")
     index.rebuild_from_workspace(Path(record.worktree))
     assert index.get_run(record.run_id) == record
+
+
+def test_complete_run_leaves_task_worktree_clean_after_learning_capture(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0]),
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+    worktree = Path(record.worktree)
+
+    assert record.state is RunState.COMPLETE
+    assert (worktree / ".examples" / "learning.jsonl").exists()
+    assert get_status_porcelain(worktree) == []
+
+    source_example = repo / ".examples" / "learning.jsonl"
+    source_example.parent.mkdir()
+    source_example.write_text('{"event":"source"}\n', encoding="utf-8")
+    assert "?? .examples/" in get_status_porcelain(repo)
 
 
 def test_dirty_worktree_resumes_same_session_with_exact_prompt(tmp_path, init_git_repo):
