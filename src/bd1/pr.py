@@ -772,6 +772,8 @@ def _check_status(check: PrCheck | None) -> str:
 
 
 def _should_emit_feedback(item: PrFeedbackItem, seen_feedback_keys: set[str]) -> bool:
+    if item.key.startswith("review-summary:"):
+        return True
     if item.source in {"ci", "mergeability", "review-decision"}:
         return True
     return item.key not in seen_feedback_keys
