@@ -36,4 +36,6 @@ class WorkspaceRegistry:
 
     def _write(self, workspaces: dict[str, dict[str, object]]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(workspaces, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        self.path.write_text(
+            json.dumps(workspaces, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )

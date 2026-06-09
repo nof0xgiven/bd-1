@@ -18,7 +18,9 @@ class DiscoverTaskContext(dspy.Signature):
     relevant_learnings: str = dspy.InputField()
     external_examples: str = dspy.InputField()
 
-    task_type: str = dspy.OutputField(desc="feature | bugfix | refactor | optimization | docs | chore")
+    task_type: str = dspy.OutputField(
+        desc="feature | bugfix | refactor | optimization | docs | chore"
+    )
     scope: list[str] = dspy.OutputField()
     source_of_truth: str = dspy.OutputField()
     files_to_read: list[dict[str, Any]] = dspy.OutputField()
@@ -336,7 +338,9 @@ class DspyReasoningPrograms:
             vet_interpretation=vet_json,
             workspace_artifacts=workspace_artifacts,
         )
-        return ReviewOutput(verdict=str(prediction.verdict), markdown=str(prediction.review_markdown))
+        return ReviewOutput(
+            verdict=str(prediction.verdict), markdown=str(prediction.review_markdown)
+        )
 
     def learn(
         self,

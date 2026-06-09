@@ -6,7 +6,9 @@ def test_collect_evidence_reads_artifacts_tree_and_learnings(tmp_path, init_git_
     repo = init_git_repo(tmp_path / "repo")
     ensure_workspace_dirs(repo)
     write_text(repo / ".artifacts" / "rules.md", "# Rules\n\nRead AGENTS.md first.\n")
-    write_text(repo / ".artifacts" / "learning" / "lesson.md", "# Lesson\n\nPrefer focused tests.\n")
+    write_text(
+        repo / ".artifacts" / "learning" / "lesson.md", "# Lesson\n\nPrefer focused tests.\n"
+    )
     write_json(
         repo / ".learning" / "learnings" / "learning-1.json",
         {"rule": "Run route tests"},
@@ -66,7 +68,9 @@ def test_collect_evidence_omits_task_history_from_workspace_artifacts(tmp_path, 
     repo = init_git_repo(tmp_path / "repo")
     ensure_workspace_dirs(repo)
     write_text(repo / ".artifacts" / "rules.md", "# Rules\n\nDurable rule.\n")
-    write_text(repo / ".artifacts" / "context" / "architecture.md", "# Architecture\n\nDurable context.\n")
+    write_text(
+        repo / ".artifacts" / "context" / "architecture.md", "# Architecture\n\nDurable context.\n"
+    )
     write_text(repo / ".artifacts" / "plans" / "old-task.md", "# Old Plan\n\nTask-specific plan.\n")
     write_text(repo / ".artifacts" / "completed" / "run.md", "# Completed\n\nTask history.\n")
 

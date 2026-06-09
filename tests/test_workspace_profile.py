@@ -41,7 +41,9 @@ def test_profile_uses_repo_evidence(tmp_path, init_git_repo):
         capture_output=True,
         text=True,
     )
-    result = add_workspace("demo", repo, "Demo product", registry=WorkspaceRegistry(tmp_path / "state"))
+    result = add_workspace(
+        "demo", repo, "Demo product", registry=WorkspaceRegistry(tmp_path / "state")
+    )
 
     profile_workspace(result.config)
 
@@ -64,9 +66,9 @@ def test_profile_reads_docs_when_present(tmp_path, init_git_repo):
     )
     add_workspace("demo", repo, "Demo product", registry=WorkspaceRegistry(tmp_path / "state"))
 
-    assert "Use a pipeline architecture." in (
-        repo / ".artifacts" / "architecture.md"
-    ).read_text(encoding="utf-8")
+    assert "Use a pipeline architecture." in (repo / ".artifacts" / "architecture.md").read_text(
+        encoding="utf-8"
+    )
     assert "docs/architecture.md" in (repo / ".artifacts" / "architecture.md").read_text(
         encoding="utf-8"
     )
@@ -74,10 +76,12 @@ def test_profile_reads_docs_when_present(tmp_path, init_git_repo):
 
 def test_profile_unknown_sections_use_exact_fallback(tmp_path, init_git_repo):
     repo = init_git_repo(tmp_path / "repo")
-    result = add_workspace("demo", repo, "Demo product", registry=WorkspaceRegistry(tmp_path / "state"))
+    result = add_workspace(
+        "demo", repo, "Demo product", registry=WorkspaceRegistry(tmp_path / "state")
+    )
 
     profile_workspace(result.config)
 
-    assert (
-        repo / ".artifacts" / "design.md"
-    ).read_text(encoding="utf-8").strip() == "No evidence found in scanned files."
+    assert (repo / ".artifacts" / "design.md").read_text(
+        encoding="utf-8"
+    ).strip() == "No evidence found in scanned files."

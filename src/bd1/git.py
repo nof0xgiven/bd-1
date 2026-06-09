@@ -23,7 +23,9 @@ def ensure_git_repo(repo: str | Path) -> None:
 
 
 def get_status_porcelain(repo: str | Path) -> list[str]:
-    return [line for line in git(repo, ["status", "--porcelain"]).stdout.splitlines() if line.strip()]
+    return [
+        line for line in git(repo, ["status", "--porcelain"]).stdout.splitlines() if line.strip()
+    ]
 
 
 def ensure_clean_repo(repo: str | Path) -> None:

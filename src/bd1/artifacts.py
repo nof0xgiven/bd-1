@@ -87,7 +87,10 @@ def _redact_json_data(data: Any, *, key: str | None = None) -> Any:
     if key is not None and _is_secret_key(key):
         return "[REDACTED]"
     if isinstance(data, dict):
-        return {str(item_key): _redact_json_data(value, key=str(item_key)) for item_key, value in data.items()}
+        return {
+            str(item_key): _redact_json_data(value, key=str(item_key))
+            for item_key, value in data.items()
+        }
     if isinstance(data, list):
         return [_redact_json_data(item) for item in data]
     if isinstance(data, str):

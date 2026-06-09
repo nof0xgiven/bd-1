@@ -26,7 +26,9 @@ def status_for_confidence(confidence: float) -> str:
 def _normalize_learning(learning: LearningRecord) -> LearningRecord:
     if learning.status not in LEARNING_STATUSES:
         statuses = ", ".join(LEARNING_STATUSES)
-        raise ValueError(f"Unsupported learning status {learning.status!r}; expected one of {statuses}")
+        raise ValueError(
+            f"Unsupported learning status {learning.status!r}; expected one of {statuses}"
+        )
     if learning.status == "superseded":
         return learning
     return replace(learning, status=status_for_confidence(learning.confidence))
@@ -54,7 +56,9 @@ class LearningStore:
         counts = dict.fromkeys(LEARNING_STATUSES, 0)
         for learning in self.load_learnings():
             if learning.status not in counts:
-                raise ValueError(f"Unsupported learning status {learning.status!r} in {learning.id}")
+                raise ValueError(
+                    f"Unsupported learning status {learning.status!r} in {learning.id}"
+                )
             counts[learning.status] += 1
         return counts
 
@@ -64,7 +68,9 @@ class LearningStore:
 
         for learning in sorted(self.load_learnings(), key=lambda item: item.id):
             if learning.status not in LEARNING_STATUSES:
-                raise ValueError(f"Unsupported learning status {learning.status!r} in {learning.id}")
+                raise ValueError(
+                    f"Unsupported learning status {learning.status!r} in {learning.id}"
+                )
             index[learning.status].append(learning.id)
             index["learnings"].append(
                 {
