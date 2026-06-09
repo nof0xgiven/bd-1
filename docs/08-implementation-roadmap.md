@@ -14,12 +14,22 @@ Deliverables:
 - Manual prompt templates wired to Pi
 - Vet invocation
 - Review loop
+- Automated PR publish/update with GitHub CLI
+- PR check and actionable feedback monitoring
+- PR feedback loop back to Pi
 
 Exit criteria:
 
-- One task can go through discovery → plan → execute → vet → review → PR manually.
+- One task can go through discovery → plan → execute → vet → review → automated PR publish/monitor.
 - All artifacts are saved.
 - Failed runs leave useful diagnostics.
+- `COMPLETE` is reached only after PR feedback is clear.
+
+Current status:
+
+- Implemented for the CLI MVP through `src/bd1/pr.py` and orchestrator states from `REVIEW_PASSED` through `PR_READY`.
+- PR artifacts are written under lowercase `.artifacts/pr/`.
+- Merge automation and webhook/post-merge learning remain future work.
 
 ## Phase 2: Hardened prompts and contracts
 
@@ -63,6 +73,8 @@ Exit criteria:
 
 - Merged PR creates at least one validated learning or a rejected-observations report.
 - Future discovery retrieves relevant learnings.
+
+Webhook-triggered learning after merge is not implemented yet.
 
 ## Phase 5: Evaluation datasets
 

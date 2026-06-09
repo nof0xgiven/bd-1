@@ -1,6 +1,6 @@
 # bd-1
 
-`bd-1` is a local CLI for running a coding task through an isolated worktree, Pi execution, Vet verification, a review gate, and learning capture.
+`bd-1` is a local CLI for running a coding task through an isolated worktree, Pi execution, Vet verification, a review gate, PR feedback, and learning capture.
 
 The current MVP is Python + uv. Files are authoritative: each run writes `.sessions/<run-id>/run-record.json` in the task worktree, while the global SQLite database under `~/.bd-1` acts as a rebuildable index.
 
@@ -12,6 +12,8 @@ uv run bd-1 --help
 ```
 
 After packaging or installing the project, use `bd-1` directly instead of `uv run bd-1`.
+
+The PR lifecycle requires GitHub CLI `gh` installed, authenticated, and authorized for the target repository.
 
 ## Register a workspace
 
@@ -59,7 +61,11 @@ Runtime flow:
 4. Invoke Pi with a fixed session id and session dir.
 5. Run Vet with `bd1-pi-history-loader`.
 6. Run the review gate.
-7. Save completion, blocker, review, and learning artifacts.
+7. Push the task branch and create or update the PR.
+8. Wait for the configured PR monitor delay.
+9. Capture CI/check failures and actionable PR review feedback.
+10. Loop back to Pi when PR feedback requires changes.
+11. Save completion, PR, blocker, review, and learning artifacts.
 
 ## Inspect runs
 
@@ -94,6 +100,18 @@ Workspace setup creates durable, reviewable files:
 .examples/
 ```
 
+PR lifecycle defaults are written to `.bd-1.toml`:
+
+```toml
+pr_command = "gh"
+pr_monitor_wait_seconds = 600
+max_pr_feedback_attempts = 3
+pr_base_branch = ""
+pr_draft = false
+```
+
+Use `pr_monitor_wait_seconds = 0` only for tests or controlled smoke runs.
+
 Raw run state and rebuildable caches stay out of normal commits:
 
 ```text
@@ -102,7 +120,7 @@ Raw run state and rebuildable caches stay out of normal commits:
 *.sqlite
 ```
 
-Task worktrees also ignore runtime artifact subdirectories such as `.artifacts/context/`, `.artifacts/plans/`, `.artifacts/reviews/`, `.artifacts/completed/`, `.artifacts/blockers/`, and `.artifacts/learning/`.
+Task worktrees also ignore runtime artifact subdirectories such as `.artifacts/context/`, `.artifacts/plans/`, `.artifacts/reviews/`, `.artifacts/completed/`, `.artifacts/blockers/`, `.artifacts/pr/`, and `.artifacts/learning/`.
 
 ## Reasoning mode
 

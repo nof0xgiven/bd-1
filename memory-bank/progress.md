@@ -2,13 +2,13 @@
 
 ## Current Status
 
-bd-1 has a working CLI MVP.
+bd-1 has a working CLI MVP with PR publish/update and PR feedback monitoring after local review passes.
 
 The repo has passed local verification after the latest hygiene fix:
 
 - `uv run ruff check src tests`
 - `uv run ruff format --check src tests`
-- `uv run pytest -q` with `79 passed`
+- `uv run pytest -q`
 - Vet for the hygiene fix with `--model flash`
 
 ## What Works
@@ -27,6 +27,11 @@ The repo has passed local verification after the latest hygiene fix:
 - Pi JSONL history loader for Vet.
 - Vet subprocess invocation and exit-code handling.
 - Review pass/fail loop.
+- PR branch push and create/update through `gh`.
+- PR check and actionable review feedback monitoring.
+- PR feedback artifacts under `.artifacts/pr/`.
+- PR feedback loop back to Pi.
+- Final `COMPLETE` state only after PR feedback is clear.
 - Max-attempt blocker behavior.
 - Feedback recording.
 - Learning and example capture.
@@ -49,9 +54,9 @@ Live smoke against `/Users/ava/main/projects/ava-realtime`:
 
 ## What Is Left To Build
 
-- PR creation and PR monitoring.
 - Merge handling.
-- Hosted CI polling.
+- Merge automation.
+- Webhook/post-merge learning.
 - Richer learning retrieval and confidence handling.
 - Better workspace profiling quality.
 - Better reporting for long-running Pi executions.
@@ -61,7 +66,8 @@ Live smoke against `/Users/ava/main/projects/ava-realtime`:
 ## Known Issues And Risks
 
 - Live DSPy behavior depends on configured model credentials.
-- Old docs under `docs/` still describe some future architecture, including PR automation that is not yet implemented.
+- Merge automation and webhook/post-merge learning are still future architecture.
+- PR lifecycle depends on `gh` being installed, authenticated, and authorized for the target repo.
 - The current learning extractor can produce noisy learning content if workspace artifacts contain unrelated prior context.
 - Global `bd-1` executable may not be installed; `uv run bd-1` is the reliable local path.
 
@@ -73,3 +79,5 @@ Live smoke against `/Users/ava/main/projects/ava-realtime`:
 - Template reasoning is for tests and fake-tool E2E only.
 - Vet receives real Pi history through `bd1-pi-history-loader`.
 - Completed task worktrees must be clean even after learning capture.
+- PR artifacts use lowercase `.artifacts/pr/`.
+- PR feedback is de-duplicated and tracked in run records before looping back to Pi.

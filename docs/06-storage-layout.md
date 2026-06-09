@@ -82,6 +82,8 @@ If a plan changes due to revision, write:
 
 Do not overwrite old artifacts unless explicitly working on durable workspace docs.
 
+PR lifecycle artifacts always use the lowercase runtime directory `.artifacts/pr/`. Feedback artifacts capture actionable CI, CodeRabbit, or human review items. Complete artifacts mark that PR checks and review feedback are clear for the monitored PR.
+
 ## Secrets policy
 
 Never persist:

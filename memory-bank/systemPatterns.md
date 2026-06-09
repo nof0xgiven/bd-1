@@ -6,6 +6,7 @@ bd-1 separates execution, verification, review, and learning.
 
 - Pi performs code changes in a task worktree.
 - Vet independently checks the task, diff, and Pi transcript.
+- GitHub CLI publishing and monitoring runs after local review passes.
 - DSPy programs generate discovery, plans, review decisions, and learning content.
 - RunStore writes authoritative run records to files.
 - RunIndex mirrors run records into SQLite for lookup.
@@ -47,6 +48,9 @@ Responsibilities:
 - Enforce clean committed execution.
 - Invoke Vet.
 - Run review.
+- Publish or update the PR after `REVIEW_PASSED`.
+- Monitor PR checks and actionable feedback.
+- Loop PR feedback back to Pi.
 - Record completion, blockers, and learning.
 
 ### Subprocess Adapters
@@ -54,11 +58,12 @@ Responsibilities:
 Files:
 
 - `src/bd1/pi.py`
+- `src/bd1/pr.py`
 - `src/bd1/vet.py`
 - `src/bd1/setup_runner.py`
 - `src/bd1/subprocesses.py`
 
-Adapters preserve commands, exit codes, stdout, stderr, and artifact paths. They should not hide failures behind synthetic success.
+Adapters preserve commands, exit codes, stdout, stderr, and artifact paths. They should not hide failures behind synthetic success. `src/bd1/pr.py` wraps `git push` and `gh` PR commands, translates startup and command failures into controlled PR errors, and writes PR lifecycle artifacts.
 
 ### Stores
 
@@ -84,7 +89,7 @@ Implemented states are in `src/bd1/models.py`.
 
 Important happy path:
 
-`TASK_RECEIVED -> BASE_VERIFIED -> WORKTREE_CREATED -> DISCOVERY_COMPLETE -> PLAN_COMPLETE -> EXECUTION_PROMPT_READY -> EXECUTION_RUNNING -> EXECUTION_COMMITTED -> VET_PASSED -> REVIEW_RUNNING -> REVIEW_PASSED -> COMPLETE`
+`TASK_RECEIVED -> BASE_VERIFIED -> WORKTREE_CREATED -> DISCOVERY_COMPLETE -> PLAN_COMPLETE -> EXECUTION_PROMPT_READY -> EXECUTION_RUNNING -> EXECUTION_COMMITTED -> VET_RUNNING -> VET_PASSED -> REVIEW_RUNNING -> REVIEW_PASSED -> PR_PUBLISHING -> PR_CREATED -> PR_MONITORING -> PR_READY -> LEARNING_RUNNING -> COMPLETE`
 
 Important failure paths:
 
@@ -94,6 +99,9 @@ Important failure paths:
 - Dirty task worktree prompts Pi again with `commit and resolve before exit`.
 - Repeated Vet findings loop until max attempts, then block.
 - Review failure loops back to Pi with a revision prompt.
+- PR check, CodeRabbit, or human review feedback writes `.artifacts/pr/` feedback and loops back to Pi.
+- Repeated PR feedback blocks after `max_pr_feedback_attempts`.
+- Merge conflicts or unknown mergeability are surfaced as PR feedback or blocker conditions; merge automation is not implemented.
 
 ## Runtime Ignore Pattern
 
@@ -108,6 +116,7 @@ Runtime excludes include:
 - `.artifacts/reviews/`
 - `.artifacts/blockers/`
 - `.artifacts/completed/`
+- `.artifacts/pr/`
 - `.artifacts/learning/`
 - `.examples/`
 - `*.db`

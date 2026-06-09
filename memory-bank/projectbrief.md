@@ -17,7 +17,10 @@ Run a coding task through an isolated local workflow:
 5. Invoke Pi as the executor.
 6. Run Vet as an independent verifier.
 7. Run a review gate.
-8. Persist run records, attempts, artifacts, feedback, and learning examples.
+8. Publish or update the task PR after local review passes.
+9. Monitor PR checks and actionable review feedback.
+10. Loop PR feedback back to Pi when changes are required.
+11. Persist run records, attempts, artifacts, feedback, and learning examples.
 
 Each completed task should leave behind structured evidence that makes later work easier to scope, verify, and improve.
 
@@ -34,13 +37,16 @@ Current MVP scope:
 - Pi execution via `pi -p`.
 - Vet execution via `vet`.
 - Pi session conversion through `bd1-pi-history-loader`.
+- PR publish, update, check monitoring, and actionable feedback capture through GitHub CLI `gh`.
+- PR feedback artifacts under `.artifacts/pr/`.
 - Template reasoning for deterministic tests through `BD1_REASONING=template`.
 - Live DSPy reasoning by default when configured.
 
 ## Out Of Scope For Current MVP
 
 - Hosted service operation.
-- Full PR creation and merge automation.
+- Merge automation.
+- Webhook/post-merge learning automation.
 - Long-term optimization training runs.
 - Replacing Pi or Vet.
 - Trusting agent output without independent verification.

@@ -2,9 +2,9 @@
 
 ## Current Focus
 
-Initial memory bank creation for the bd-1 repo.
+Document the current bd-1 PR lifecycle implementation in the docs and memory bank.
 
-This memory bank should replace scattered working context for future agents. Keep it current and remove stale statements instead of appending conflicting notes.
+This memory bank replaces scattered working context for future agents. Keep it current and remove stale statements instead of appending conflicting notes.
 
 ## Recent Changes
 
@@ -14,13 +14,18 @@ This memory bank should replace scattered working context for future agents. Kee
 - Ran a live smoke test against `ava-realtime`; bd-1 reached `COMPLETE`.
 - Fixed task worktree hygiene after learning capture so `.examples/learning.jsonl` does not leave completed task worktrees dirty.
 - Pushed `ava-realtime/main` after committing meeting bridge, OpenAI realtime, and bd-1 workspace artifacts there.
+- Added `src/bd1/pr.py` as the GitHub CLI PR adapter.
+- Added PR publish/update after `REVIEW_PASSED`.
+- Added PR check and actionable review feedback monitoring.
+- Added PR feedback artifacts under lowercase `.artifacts/pr/`.
+- Added PR feedback loops back to Pi and completion only after PR feedback is clear.
 
-## Current Branch State
+## Current Implementation Status
 
 - Repo: `/Users/ava/orca/workspaces/bd-1`
 - Branch: `bd-1-cli-mvp`
-- Latest bd-1 commit: `2214003 fix: keep bd-1 task worktrees clean after learning`
-- Working tree was clean before this memory-bank creation.
+- PR lifecycle work is implemented for publish/update, monitoring, feedback artifacts, and feedback loops.
+- Merge automation and webhook/post-merge learning are still future work.
 
 ## Active Decisions
 
@@ -33,6 +38,8 @@ This memory bank should replace scattered working context for future agents. Kee
 - Live DSPy reasoning is the default path.
 - Pi must produce a real session JSONL file. Missing Pi sessions block before Vet.
 - Vet exit code `0` passes, `10` loops with findings, `1` or `2` blocks.
+- `gh` is the external runtime dependency for PR publish/update and monitoring.
+- PR lifecycle config fields are `pr_command`, `pr_monitor_wait_seconds`, `max_pr_feedback_attempts`, `pr_base_branch`, and `pr_draft`.
 
 ## Important Patterns And Preferences
 
@@ -45,10 +52,9 @@ This memory bank should replace scattered working context for future agents. Kee
 
 ## Next Steps
 
-- Commit this memory bank.
-- Decide whether to push the bd-1 branch.
-- Decide whether the live smoke task branch should be pushed, preserved locally, or deleted.
-- Continue tightening the CLI before adding PR automation.
+- Keep docs aligned with the implemented PR lifecycle states.
+- Build merge automation when the product scope explicitly includes it.
+- Add webhook/post-merge learning when the learning pipeline is ready for that trigger.
 
 ## Memory Bank Update Rule
 

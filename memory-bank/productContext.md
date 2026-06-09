@@ -11,6 +11,7 @@ bd-1 exists to make each task produce reusable context:
 - What Pi did.
 - What Vet found.
 - What review decided.
+- What PR checks and reviewers found.
 - What should be learned for the next task.
 
 ## Problems Solved
@@ -19,6 +20,8 @@ bd-1 exists to make each task produce reusable context:
 - Keeps task work isolated from the source repo by using git worktrees.
 - Records run state in files that can be inspected without a database.
 - Gives Vet a real Pi transcript through a history loader instead of fabricated context.
+- Publishes or updates a PR after local review passes.
+- Turns CI failures and actionable PR review feedback into the next Pi execution prompt.
 - Captures feedback and learning events after a run.
 - Keeps runtime artifacts out of normal commits.
 
@@ -29,6 +32,7 @@ bd-1 exists to make each task produce reusable context:
 - A user can run `bd-1 run --workspace name "task"` from elsewhere.
 - A user can inspect a run with `bd-1 status <run-id>`.
 - A user can add correction feedback with `bd-1 feedback <run-id> ...`.
+- A completed run means local review passed and monitored PR feedback is clear.
 - Failures should produce blocker artifacts with enough detail for a human to act.
 
 ## Expected Product Feel
@@ -53,3 +57,5 @@ The MVP completed a live smoke run against `/Users/ava/main/projects/ava-realtim
 - Ran Vet with exit code `0`.
 - Produced a review verdict of `PASS`.
 - Completed with final state `COMPLETE`.
+
+The current PR lifecycle extends that flow by publishing or updating the task PR, waiting for configured PR monitoring, recording `.artifacts/pr/` feedback, looping actionable feedback back to Pi, and completing only after PR feedback is clear.
