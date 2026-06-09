@@ -1,4 +1,11 @@
+import json
+from typing import ClassVar
+
 from bd1.cli import build_parser, main, read_task_argument
+from bd1.config import default_workspace_config, write_workspace_config
+from bd1.models import RunRecord, RunState
+from bd1.registry import WorkspaceRegistry
+from bd1.run_store import RunStore
 
 
 def test_run_accepts_task_without_workspace():
@@ -84,3 +91,142 @@ def test_workspace_add_list_and_profile_cli(tmp_path, init_git_repo, monkeypatch
     assert main(["workspace", "profile", "demo"]) == 0
     profile_output = capsys.readouterr()
     assert "Profile artifacts written for workspace demo" in profile_output.out
+
+
+class FakeOrchestrator:
+    calls: ClassVar[list] = []
+
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def run(self, config, task):
+        self.__class__.calls.append((config, task, self.kwargs))
+        return RunRecord(
+            run_id="run-1",
+            workspace=config.name,
+            task=task,
+            base_commit="base",
+            branch="bd-1/run-1",
+            worktree=config.repo_path,
+            state=RunState.COMPLETE,
+            created_at="2026-06-09T12:00:00Z",
+            updated_at="2026-06-09T12:01:00Z",
+            final_verdict="PASS",
+        )
+
+
+def test_run_resolves_workspace_from_current_repo_config(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config("demo", str(repo), "Demo product", "", "main")
+    write_workspace_config(repo, config)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    monkeypatch.setattr("bd1.cli.Orchestrator", FakeOrchestrator)
+    FakeOrchestrator.calls = []
+
+    assert main(["run", "Fix bug"]) == 0
+
+    assert FakeOrchestrator.calls[0][0].name == "demo"
+    assert FakeOrchestrator.calls[0][1] == "Fix bug"
+    assert "run-1" in capsys.readouterr().out
+
+
+def test_run_resolves_sole_registered_workspace_outside_repo(tmp_path, init_git_repo, monkeypatch):
+    repo = init_git_repo(tmp_path / "repo")
+    state = tmp_path / "state"
+    WorkspaceRegistry(state).add(default_workspace_config("demo", str(repo), "Demo", "", "main"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BD1_HOME", str(state))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    monkeypatch.setattr("bd1.cli.Orchestrator", FakeOrchestrator)
+    FakeOrchestrator.calls = []
+
+    assert main(["run", "Fix bug"]) == 0
+
+    assert FakeOrchestrator.calls[0][0].name == "demo"
+
+
+def test_run_requires_workspace_when_multiple_registered(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    repo_a = init_git_repo(tmp_path / "repo-a")
+    repo_b = init_git_repo(tmp_path / "repo-b")
+    state = tmp_path / "state"
+    registry = WorkspaceRegistry(state)
+    registry.add(default_workspace_config("a", str(repo_a), "A", "", "main"))
+    registry.add(default_workspace_config("b", str(repo_b), "B", "", "main"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BD1_HOME", str(state))
+
+    assert main(["run", "Fix bug"]) == 1
+
+    assert "Use --workspace" in capsys.readouterr().err
+
+
+def test_status_reads_authoritative_run_and_refreshes_index(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(repo),
+        state=RunState.COMPLETE,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+    )
+    RunStore(tmp_path / "state").write(repo, record)
+
+    assert main(["status", "run-1"]) == 0
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["run_id"] == "run-1"
+    assert data["state"] == "COMPLETE"
+    assert (tmp_path / "state" / "runs.db").exists()
+
+
+def test_feedback_writes_record_and_updates_authoritative_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(repo),
+        state=RunState.COMPLETE,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+    )
+    store = RunStore(tmp_path / "state")
+    store.write(repo, record)
+
+    assert (
+        main(
+            [
+                "feedback",
+                "run-1",
+                "--outcome",
+                "wrong_behavior",
+                "--wrong-or-missing",
+                "Missed test",
+                "--expected",
+                "Add test",
+            ]
+        )
+        == 0
+    )
+
+    updated = store.read_by_id("run-1")
+    assert len(updated.feedback_paths) == 1
+    assert (repo / ".sessions" / "run-1" / "feedback.json").exists()
+    assert (repo / ".artifacts" / "learning" / "run-1-feedback.md").exists()
