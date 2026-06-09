@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+from bd1.errors import Bd1Error
+from bd1.paths import global_state_dir
+from bd1.registry import WorkspaceRegistry
+from bd1.workspace import add_workspace, profile_workspace
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,5 +60,41 @@ def read_task_argument(task: str | None, task_file: str | None) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    parser.parse_args(argv)
-    return 0
+    args = parser.parse_args(argv)
+    registry = WorkspaceRegistry(global_state_dir())
+
+    try:
+        if args.command == "workspace":
+            return _handle_workspace(args, registry)
+        return 0
+    except Bd1Error as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+def _handle_workspace(argparse_namespace: argparse.Namespace, registry: WorkspaceRegistry) -> int:
+    if argparse_namespace.workspace_command == "add":
+        result = add_workspace(
+            argparse_namespace.name,
+            argparse_namespace.repo,
+            argparse_namespace.product,
+            setup_script=argparse_namespace.setup_script,
+            default_branch=argparse_namespace.default_branch,
+            registry=registry,
+        )
+        print(result.guidance)
+        return 0
+
+    if argparse_namespace.workspace_command == "list":
+        for workspace in registry.list_workspaces():
+            print(f"{workspace.name}\t{workspace.repo_path}\t{workspace.product_description}")
+        return 0
+
+    if argparse_namespace.workspace_command == "profile":
+        config = registry.get(argparse_namespace.workspace)
+        profile_workspace(config)
+        print(f"Profile artifacts written for workspace {config.name}")
+        return 0
+
+    parser_error = f"Unknown workspace command: {argparse_namespace.workspace_command}"
+    raise SystemExit(parser_error)
