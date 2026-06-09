@@ -23,9 +23,12 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
 
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
-    _write_fake_pi(fake_bin / "pi")
-    _write_fake_vet(fake_bin / "vet")
-    _write_fake_gh(fake_bin / "gh")
+    _write_poison_command(fake_bin / "pi")
+    _write_poison_command(fake_bin / "vet")
+    _write_poison_command(fake_bin / "gh")
+    _write_fake_pi(fake_bin / "custom-pi")
+    _write_fake_vet(fake_bin / "custom-vet")
+    _write_fake_gh(fake_bin / "custom-gh")
 
     env = _cli_env(tmp_path / "state", fake_bin)
     env["BD1_FAKE_GH_STATE"] = str(tmp_path / "fake-gh-state.json")
@@ -50,6 +53,9 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     config_path = repo / ".bd-1.toml"
     text = config_path.read_text(encoding="utf-8")
     text = text.replace("pr_monitor_wait_seconds = 600", "pr_monitor_wait_seconds = 0")
+    text = text.replace('pi_command = "pi"', 'pi_command = "custom-pi"')
+    text = text.replace('vet_command = "vet"', 'vet_command = "custom-vet"')
+    text = text.replace('pr_command = "gh"', 'pr_command = "custom-gh"')
     config_path.write_text(text, encoding="utf-8")
 
     status_before_commit = _git(repo, ["status", "--short", "--untracked-files=all"]).stdout
@@ -200,6 +206,19 @@ subprocess.run(["git", "config", "user.name", "Test User"], check=True)
 subprocess.run(["git", "add", "fixture-change.txt"], check=True)
 subprocess.run(["git", "commit", "-m", "fake pi fixture change"], check=True)
 print("fake pi complete")
+""",
+        encoding="utf-8",
+    )
+    path.chmod(0o755)
+
+
+def _write_poison_command(path: Path) -> None:
+    path.write_text(
+        f"""#!{sys.executable}
+import sys
+
+print("default command should not run: {path.name}", file=sys.stderr)
+raise SystemExit(64)
 """,
         encoding="utf-8",
     )

@@ -89,12 +89,20 @@ class Orchestrator:
         self.global_root = Path(global_root) if global_root else global_state_dir()
         self.reasoning = reasoning or DspyReasoningPrograms()
         self.setup_runner = setup_runner or SetupRunner()
-        self.pi_runner = pi_runner or PiRunner()
-        self.vet_runner = vet_runner or VetRunner()
-        self.pr_runner = pr_runner or PrRunner()
+        self._pi_runner = pi_runner
+        self._vet_runner = vet_runner
+        self._pr_runner = pr_runner
         self.run_store = run_store or RunStore(self.global_root)
 
     def run(self, config: WorkspaceConfig, task: str) -> RunRecord:
+        pi_runner = self._pi_runner or PiRunner(
+            pi_command=config.pi_command,
+            pi_model=config.pi_model,
+            pi_provider=config.pi_provider,
+        )
+        vet_runner = self._vet_runner or VetRunner(vet_command=config.vet_command)
+        pr_runner = self._pr_runner or PrRunner(pr_command=config.pr_command)
+
         repo = Path(config.repo_path).expanduser().resolve()
         ensure_git_repo(repo)
         ensure_clean_repo(repo)
@@ -187,7 +195,7 @@ class Orchestrator:
                 RunState.EXECUTION_RUNNING,
                 f"attempt {attempt_number} pi running",
             )
-            pi_result = self.pi_runner.run(
+            pi_result = pi_runner.run(
                 worktree=worktree,
                 prompt=prompt,
                 session_id=session_id,
@@ -203,6 +211,15 @@ class Orchestrator:
                     evidence,
                     pi_result=pi_result,
                 )
+            if pi_result.exit_code != 0:
+                return self._block(
+                    worktree,
+                    record,
+                    "Pi failed",
+                    _pi_failure_details(pi_result),
+                    evidence,
+                    pi_result=pi_result,
+                )
 
             if get_status_porcelain(worktree):
                 record = self._transition(
@@ -211,7 +228,7 @@ class Orchestrator:
                     RunState.EXECUTION_NEEDS_CLEAN_COMMIT,
                     "pi exited with dirty worktree",
                 )
-                pi_result = self.pi_runner.run(
+                pi_result = pi_runner.run(
                     worktree=worktree,
                     prompt=config.dirty_exit_prompt,
                     session_id=session_id,
@@ -224,6 +241,15 @@ class Orchestrator:
                         record,
                         "Pi session missing",
                         pi_result.error or "No Pi session JSONL found.",
+                        evidence,
+                        pi_result=pi_result,
+                    )
+                if pi_result.exit_code != 0:
+                    return self._block(
+                        worktree,
+                        record,
+                        "Pi failed",
+                        _pi_failure_details(pi_result),
                         evidence,
                         pi_result=pi_result,
                     )
@@ -247,7 +273,7 @@ class Orchestrator:
                 f"attempt {attempt_number} committed",
             )
 
-            vet_result = self.vet_runner.run(
+            vet_result = vet_runner.run(
                 repo_path=worktree,
                 task=task,
                 base_commit=base_commit,
@@ -283,7 +309,7 @@ class Orchestrator:
                 write_text(attempt_dir / "vet-revision-prompt.md", revision_prompt)
                 continue
 
-            if vet_result.exit_code in {1, 2}:
+            if vet_result.exit_code != 0:
                 record = self._append_attempt(worktree, record, attempt)
                 return self._block(
                     worktree,
@@ -339,7 +365,7 @@ class Orchestrator:
 
             record = self._transition(worktree, record, RunState.PR_PUBLISHING, "publishing PR")
             try:
-                publication = self.pr_runner.publish_or_update(
+                publication = pr_runner.publish_or_update(
                     worktree=worktree,
                     task=task,
                     branch=branch,
@@ -362,7 +388,7 @@ class Orchestrator:
 
             record = self._transition(worktree, record, RunState.PR_MONITORING, "monitoring PR")
             try:
-                pr_result = self.pr_runner.monitor(
+                pr_result = pr_runner.monitor(
                     worktree=worktree,
                     task=task,
                     task_slug=task_slug,
@@ -548,3 +574,13 @@ def _ignore_runtime_paths(worktree: Path) -> None:
     if changed:
         exclude_path.parent.mkdir(parents=True, exist_ok=True)
         exclude_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _pi_failure_details(pi_result: PiResult) -> str:
+    parts = [f"Pi exited with exit {pi_result.exit_code}."]
+    if pi_result.error:
+        parts.append(pi_result.error)
+    stderr = pi_result.stderr_path.read_text(encoding="utf-8").strip()
+    if stderr:
+        parts.append(stderr)
+    return " ".join(parts)

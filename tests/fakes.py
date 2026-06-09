@@ -58,6 +58,9 @@ class FakePiBehavior:
     create_session: bool = True
     commit: bool = True
     dirty: bool = False
+    exit_code: int = 0
+    stderr: str = ""
+    error: str = ""
 
 
 class FakePiRunner:
@@ -84,7 +87,7 @@ class FakePiRunner:
         session_dir_path = Path(session_dir)
         artifact_path = Path(artifact_dir)
         stdout_path = write_text(artifact_path / "pi-stdout.txt", f"pi call {index}\n")
-        stderr_path = write_text(artifact_path / "pi-stderr.txt", "")
+        stderr_path = write_text(artifact_path / "pi-stderr.txt", behavior.stderr)
         session_file = None
         if behavior.create_session:
             session_dir_path.mkdir(parents=True, exist_ok=True)
@@ -126,11 +129,12 @@ class FakePiRunner:
 
         return PiResult(
             command=["fake-pi"],
-            exit_code=0,
+            exit_code=behavior.exit_code,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             session_file=session_file,
             session_id=session_id,
+            error=behavior.error,
         )
 
 

@@ -166,6 +166,69 @@ def test_missing_pi_session_blocks_before_vet(tmp_path, init_git_repo):
     assert "No Pi session JSONL" in Path(record.blocker_path).read_text(encoding="utf-8")
 
 
+def test_pi_nonzero_exit_with_session_blocks_before_vet_and_pr(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    vet = FakeVetRunner([0])
+    pr = FakePrRunner()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        pi_runner=FakePiRunner(
+            [
+                FakePiBehavior(
+                    create_session=True,
+                    commit=True,
+                    exit_code=7,
+                    stderr="pi crashed after writing session",
+                )
+            ]
+        ),
+        vet_runner=vet,
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.BLOCKED
+    assert vet.calls == 0
+    assert pr.publish_calls == []
+    blocker = Path(record.blocker_path).read_text(encoding="utf-8")
+    assert "Pi failed" in blocker
+    assert "exit 7" in blocker
+    assert "pi crashed after writing session" in blocker
+
+
+def test_dirty_worktree_cleanup_pi_nonzero_exit_blocks_before_vet_and_pr(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    vet = FakeVetRunner([0])
+    pr = FakePrRunner()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        pi_runner=FakePiRunner(
+            [
+                FakePiBehavior(create_session=True, commit=False, dirty=True),
+                FakePiBehavior(
+                    create_session=True,
+                    commit=True,
+                    exit_code=7,
+                    stderr="cleanup pi failed",
+                ),
+            ]
+        ),
+        vet_runner=vet,
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.BLOCKED
+    assert vet.calls == 0
+    assert pr.publish_calls == []
+    blocker = Path(record.blocker_path).read_text(encoding="utf-8")
+    assert "Pi failed" in blocker
+    assert "exit 7" in blocker
+    assert "cleanup pi failed" in blocker
+
+
 def test_vet_findings_loop_review_failure_loop_and_learning_events(tmp_path, init_git_repo):
     repo = init_git_repo(tmp_path / "repo")
     reasoning = FakeReasoning(["FAIL", "PASS"])
@@ -198,6 +261,29 @@ def test_vet_runtime_and_config_errors_block(tmp_path, init_git_repo, exit_code)
 
     assert record.state is RunState.BLOCKED
     assert "Vet failed" in Path(record.blocker_path).read_text(encoding="utf-8")
+
+
+def test_vet_unknown_nonzero_exit_blocks_before_review_and_pr(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    reasoning = FakeReasoning(["PASS"])
+    pr = FakePrRunner()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=reasoning,
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([127]),
+        pr_runner=pr,
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.BLOCKED
+    assert reasoning.review_calls == 0
+    assert pr.publish_calls == []
+    blocker = Path(record.blocker_path).read_text(encoding="utf-8")
+    assert "Vet failed" in blocker
+    assert "exit 127" in blocker
+    assert "vet stderr" in blocker
 
 
 def test_repeated_vet_findings_max_attempts_writes_blocker(tmp_path, init_git_repo):
