@@ -430,6 +430,7 @@ class PrRunner:
         if not isinstance(reviews, list):
             raise PrError(f"Invalid JSON shape from {self.pr_command} pr view: reviews")
         feedback = []
+        review_decision = str(details.get("reviewDecision", ""))
         for review in reviews:
             if not isinstance(review, dict):
                 raise PrError(f"Invalid JSON shape from {self.pr_command} pr view: reviews")
@@ -447,7 +448,9 @@ class PrRunner:
             feedback.append(
                 PrFeedbackItem(
                     key=f"review-summary:{identifier}",
-                    source="review",
+                    source=(
+                        "review-decision" if review_decision == "CHANGES_REQUESTED" else "review"
+                    ),
                     author=author,
                     body=body,
                     path="",
@@ -458,7 +461,7 @@ class PrRunner:
                     commit_id=commit_id,
                 )
             )
-        if str(details.get("reviewDecision", "")) == "CHANGES_REQUESTED" and not feedback:
+        if review_decision == "CHANGES_REQUESTED" and not feedback:
             feedback.append(
                 PrFeedbackItem(
                     key="review-decision:CHANGES_REQUESTED",

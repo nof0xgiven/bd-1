@@ -570,6 +570,45 @@ def test_pr_runner_reports_changes_requested_review_body(tmp_path):
     fake.assert_exhausted()
 
 
+def test_pr_runner_keeps_seen_changes_requested_review_body_blocking(tmp_path):
+    worktree, _, _ = _worktree(tmp_path)
+    reviews = [
+        {
+            "id": "R_123",
+            "state": "CHANGES_REQUESTED",
+            "body": "Please simplify the parser.",
+            "author": {"login": "maintainer"},
+            "url": "https://github.com/acme/demo/pull/12#pullrequestreview-123",
+            "submittedAt": "2026-06-09T00:00:00Z",
+            "commit": {"oid": "def456"},
+        }
+    ]
+    fake = StrictFakeCommands(
+        [
+            (
+                _view_pr(12),
+                _pr_details(12, review_decision="CHANGES_REQUESTED", reviews=reviews),
+            ),
+            (_checks(12), _passing_checks()),
+            (_review_comments(12), "[]"),
+            (_issue_comments(12), "[]"),
+        ]
+    )
+
+    result = _monitor(
+        PrRunner(pr_command="gh", command_runner=fake, sleeper=lambda _: None),
+        worktree,
+        PrPublication(number=12, url="https://github.com/acme/demo/pull/12", state="OPEN"),
+        seen_feedback_keys={"review-summary:R_123"},
+    )
+
+    assert [item.key for item in result.feedback] == ["review-summary:R_123"]
+    assert result.feedback[0].body == "Please simplify the parser."
+    assert Path(result.artifact_path).exists()
+    assert result.complete_artifact_path == ""
+    fake.assert_exhausted()
+
+
 def test_pr_runner_filters_seen_feedback_keys(tmp_path):
     worktree, completed, review = _worktree(tmp_path)
     fake = StrictFakeCommands(
