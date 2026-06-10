@@ -436,3 +436,49 @@ def test_learning_interface_accepts_diff_and_feedback_without_live_model_calls()
 
     assert "diff --git" in output.markdown
     assert "Please cover edge cases." in output.markdown
+
+
+def test_template_profile_returns_all_six_artifacts():
+    programs = TemplateReasoningPrograms()
+    output = programs.profile(repo_evidence="tree", product_description="a product")
+    assert set(output.artifacts) == {
+        "architecture",
+        "system_patterns",
+        "testing",
+        "design",
+        "rules",
+        "product",
+    }
+    assert "a product" in output.artifacts["product"]
+
+
+def test_dspy_profile_maps_prediction_fields():
+    prediction = SimpleNamespace(
+        architecture_markdown="arch",
+        system_patterns_markdown="pat",
+        testing_markdown="test",
+        design_markdown="des",
+        rules_markdown="rules",
+        product_markdown="prod",
+    )
+    programs = DspyReasoningPrograms(
+        profiler=_stub_program(prediction),
+        discovery_react_factory=lambda root, max_iters: _stub_program(None),
+    )
+    output = programs.profile(repo_evidence="tree", product_description="p")
+    assert output.artifacts["architecture"] == "arch"
+    assert output.artifacts["rules"] == "rules"
+
+
+def test_dspy_profile_raises_on_empty_required_field():
+    prediction = SimpleNamespace(
+        architecture_markdown="",
+        system_patterns_markdown="pat",
+        testing_markdown="t",
+        design_markdown="d",
+        rules_markdown="r",
+        product_markdown="p",
+    )
+    programs = DspyReasoningPrograms(profiler=_stub_program(prediction))
+    with pytest.raises(ReasoningOutputError):
+        programs.profile(repo_evidence="tree", product_description="p")

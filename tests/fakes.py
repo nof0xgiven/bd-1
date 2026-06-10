@@ -8,11 +8,18 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bd1.artifacts import write_text
-from bd1.dspy_programs import DiscoveryOutput, LearningOutput, PlanOutput, ReviewOutput
+from bd1.dspy_programs import (
+    DiscoveryOutput,
+    LearningOutput,
+    PlanOutput,
+    ProfileOutput,
+    ReviewOutput,
+)
 from bd1.pi import PiResult
 from bd1.pr import PrCheck, PrPublication, PrResult
 from bd1.subprocesses import CommandResult
 from bd1.vet import VetResult, _outcome_for_exit_code
+from bd1.workspace import PROFILE_ARTIFACTS
 
 
 def hermetic_git_env() -> dict[str, str]:
@@ -28,6 +35,7 @@ class FakeReasoning:
         self.learn_events: list[str] = []
         self.learn_calls: list[dict] = []
         self.discover_evidence: list = []
+        self.profile_calls: list[dict] = []
 
     def discover(self, evidence) -> DiscoveryOutput:
         self.discover_evidence.append(evidence)
@@ -87,6 +95,17 @@ class FakeReasoning:
                     "tags": ["fake"],
                 }
             ],
+        )
+
+    def profile(self, *, repo_evidence: str, product_description: str) -> ProfileOutput:
+        self.profile_calls.append(
+            {
+                "repo_evidence": repo_evidence,
+                "product_description": product_description,
+            }
+        )
+        return ProfileOutput(
+            artifacts={key: f"fake {key}\n\n{product_description}" for key in PROFILE_ARTIFACTS}
         )
 
 

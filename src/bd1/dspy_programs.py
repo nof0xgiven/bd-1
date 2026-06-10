@@ -133,6 +133,47 @@ class ExtractLearning(dspy.Signature):
     rejected_observations: list[str] = dspy.OutputField()
 
 
+class ProfileWorkspace(dspy.Signature):
+    """Explore a repository and produce the six workspace profile artifacts.
+
+    You are profiling a workspace so future coding agents inherit accurate,
+    repository-specific context. Ground every claim in the supplied repository
+    evidence (file tree and key file excerpts) — not in generic best practice. Where the
+    repository gives no evidence for a section, say so explicitly rather than
+    inventing content. Architecture: domains, data stores, dependencies, service
+    boundaries. System patterns: centralized helpers, conventions, constraints.
+    Testing: frameworks, how to run tests, coverage expectations. Design: UI/UX
+    system and frameworks if any. Rules: project-specific instructions agents
+    must follow (AGENTS.md, CLAUDE.md, lint configs). Product: who this is for
+    and what it does, anchored on the provided product description.
+    """
+
+    repo_evidence: str = dspy.InputField(desc="file tree and key file excerpts")
+    product_description: str = dspy.InputField()
+
+    architecture_markdown: str = dspy.OutputField()
+    system_patterns_markdown: str = dspy.OutputField()
+    testing_markdown: str = dspy.OutputField()
+    design_markdown: str = dspy.OutputField()
+    rules_markdown: str = dspy.OutputField()
+    product_markdown: str = dspy.OutputField()
+
+
+@dataclass(frozen=True)
+class ProfileOutput:
+    artifacts: dict[str, str]  # keys: the six PROFILE_ARTIFACTS keys
+
+
+_PROFILE_FIELDS = {
+    "architecture": "architecture_markdown",
+    "system_patterns": "system_patterns_markdown",
+    "testing": "testing_markdown",
+    "design": "design_markdown",
+    "rules": "rules_markdown",
+    "product": "product_markdown",
+}
+
+
 @dataclass(frozen=True)
 class DiscoveryOutput:
     markdown: str
@@ -198,6 +239,8 @@ class ReasoningPrograms(Protocol):
         final_diff: str = "",
         pr_feedback: str = "",
     ) -> LearningOutput: ...
+
+    def profile(self, *, repo_evidence: str, product_description: str) -> ProfileOutput: ...
 
 
 class TemplateReasoningPrograms:
@@ -274,6 +317,16 @@ class TemplateReasoningPrograms:
                 }
             ],
         )
+
+    def profile(self, *, repo_evidence: str, product_description: str) -> ProfileOutput:
+        artifacts = {
+            key: (
+                f"# {key}\n\nTemplate profile.\n\n"
+                f"{product_description if key == 'product' else repo_evidence}"
+            )
+            for key in _PROFILE_FIELDS
+        }
+        return ProfileOutput(artifacts=artifacts)
 
 
 class DiscoveryProgram(dspy.Module):
@@ -382,6 +435,7 @@ class DspyReasoningPrograms:
         planner: Any | None = None,
         reviewer: Any | None = None,
         learning_extractor: Any | None = None,
+        profiler: Any | None = None,
         discovery_max_iters: int = 12,
         discovery_react_factory: Any | None = None,
     ) -> None:
@@ -390,6 +444,7 @@ class DspyReasoningPrograms:
         self._planner = planner or PlanningProgram()
         self._reviewer = reviewer or ReviewProgram()
         self._learning_extractor = learning_extractor or LearningProgram()
+        self._profiler = profiler or dspy.ChainOfThought(ProfileWorkspace)
         self._discovery_react_factory = discovery_react_factory or build_discovery_react
 
     def discover(self, evidence: EvidencePackage) -> DiscoveryOutput:
@@ -486,6 +541,16 @@ class DspyReasoningPrograms:
             learnings=_list_or_default(prediction, "learnings"),
             examples=_list_or_default(prediction, "examples"),
         )
+
+    def profile(self, *, repo_evidence: str, product_description: str) -> ProfileOutput:
+        prediction = self._profiler(
+            repo_evidence=repo_evidence, product_description=product_description
+        )
+        artifacts = {
+            key: _required_markdown(prediction, field_name, f"Profile:{key}")
+            for key, field_name in _PROFILE_FIELDS.items()
+        }
+        return ProfileOutput(artifacts=artifacts)
 
 
 def _format_coder_summary(discovery_context: str, pi_completion_summary: str) -> str:
