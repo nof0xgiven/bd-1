@@ -91,6 +91,28 @@ def test_sync_skips_unmerged_and_already_synced(tmp_path, complete_run_record):
     assert outcome.skipped == {record.run_id: "not merged (OPEN)"}
 
 
+def test_sync_uses_configured_pr_command(tmp_path, complete_run_record):
+    from dataclasses import replace
+
+    record, run_store, config = complete_run_record
+    config = replace(config, pr_command="custom-gh --flag")
+
+    def runner(command, *, cwd, env=None, timeout=None):
+        assert command[:2] == ["custom-gh", "--flag"]
+        assert command[2:4] == ["pr", "view"]
+        return _result(0, _gh_view_response("MERGED", "2026-06-10T10:00:00Z"))
+
+    outcome = sync_runs(
+        run_store=run_store,
+        records=[record],
+        config=config,
+        reasoning=TemplateReasoningPrograms(),
+        runner=runner,
+        global_root=run_store.global_root,
+    )
+    assert outcome.learned == [record.run_id]
+
+
 def test_sync_ignores_ineligible_records(tmp_path, complete_run_record):
     from dataclasses import replace
 

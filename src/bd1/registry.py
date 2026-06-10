@@ -47,7 +47,10 @@ class WorkspaceRegistry:
     def _load(self) -> dict[str, dict[str, object]]:
         if not self.path.exists():
             return {}
-        return json.loads(self.path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(self.path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise WorkspaceConfigError(f"Corrupt workspace registry: {self.path}: {exc}") from exc
 
     def _write(self, workspaces: dict[str, dict[str, object]]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)

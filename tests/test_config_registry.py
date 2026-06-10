@@ -137,3 +137,15 @@ def test_load_workspace_config_names_unknown_keys(tmp_path):
         load_workspace_config(repo)
 
     assert "worktree_root_policy" in str(exc.value)
+
+
+def test_registry_wraps_corrupt_registry_json_as_workspace_config_error(tmp_path):
+    registry = WorkspaceRegistry(tmp_path / "state")
+    registry.path.parent.mkdir(parents=True, exist_ok=True)
+    registry.path.write_text("{not valid json", encoding="utf-8")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        registry.list_workspaces()
+
+    assert "Corrupt workspace registry" in str(exc.value)
+    assert str(registry.path) in str(exc.value)

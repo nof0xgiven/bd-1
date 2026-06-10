@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -53,7 +54,14 @@ def sync_runs(
     for record in candidates:
         try:
             result = runner(
-                ["gh", "pr", "view", str(record.pr_number), "--json", "state,mergedAt"],
+                [
+                    *shlex.split(config.pr_command or "gh"),
+                    "pr",
+                    "view",
+                    str(record.pr_number),
+                    "--json",
+                    "state,mergedAt",
+                ],
                 cwd=config.repo_path,
                 timeout=GH_TIMEOUT_SECONDS,
             )
