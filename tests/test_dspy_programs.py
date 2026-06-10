@@ -324,7 +324,7 @@ def _react_evidence(tmp_path, **overrides) -> EvidencePackage:
     return EvidencePackage(**fields)
 
 
-def test_discover_uses_react_then_falls_back_to_single_shot(tmp_path):
+def test_discover_uses_react_then_falls_back_to_single_shot(tmp_path, capsys):
     fallback = _RecordingFallback()
     programs = DspyReasoningPrograms(
         discovery=fallback, discovery_react_factory=lambda root, max_iters: _ExplodingReact()
@@ -334,10 +334,18 @@ def test_discover_uses_react_then_falls_back_to_single_shot(tmp_path):
 
     assert "fallback" in output.markdown
     assert "single-shot fallback" in output.markdown.lower()
+    # The note must surface the failure cause so operators can distinguish
+    # transient exhaustion from "ReAct never works in this workspace".
+    assert "RuntimeError" in output.markdown
+    assert "react exhausted" in output.markdown
     assert len(fallback.calls) == 1
+    stderr = capsys.readouterr().err
+    assert "tool-using discovery failed" in stderr
+    assert "RuntimeError" in stderr
+    assert "react exhausted" in stderr
 
 
-def test_discover_prefers_react_result(tmp_path):
+def test_discover_prefers_react_result(tmp_path, capsys):
     def react(**kwargs):
         return SimpleNamespace(context_package_markdown="# Context Package: via react")
 
@@ -352,6 +360,7 @@ def test_discover_prefers_react_result(tmp_path):
     assert "via react" in output.markdown
     assert "fallback" not in output.markdown.lower()
     assert fallback.calls == []
+    assert capsys.readouterr().err == ""
 
 
 def test_discover_passes_artifacts_and_learnings_to_react(tmp_path):

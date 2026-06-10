@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -404,14 +405,24 @@ class DspyReasoningPrograms:
             prediction = react(**inputs)
             markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
             return DiscoveryOutput(markdown=markdown)
-        except Exception:
+        except Exception as exc:
             # ReAct failures (iteration exhaustion, tool/adapter errors) must
             # degrade to single-shot discovery, never block the run on their
             # own. A failure of the fallback itself still raises
-            # ReasoningOutputError via _required_markdown.
+            # ReasoningOutputError via _required_markdown. Surface the cause
+            # so operators can tell transient exhaustion from "ReAct never
+            # works in this workspace".
+            print(
+                "bd-1: tool-using discovery failed, using single-shot fallback: "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
             prediction = self._discovery(**inputs)
             markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
-            note = "\n\n> Note: tool-using discovery failed; single-shot fallback was used.\n"
+            note = (
+                f"\n\n> Note: tool-using discovery failed "
+                f"({type(exc).__name__}: {str(exc)[:200]}); single-shot fallback was used.\n"
+            )
             return DiscoveryOutput(markdown=markdown + note)
 
     def plan(self, evidence: EvidencePackage, *, discovery_context: str) -> PlanOutput:
