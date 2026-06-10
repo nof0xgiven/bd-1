@@ -120,6 +120,29 @@ def compile_conflict_resolution_prompt(*, base_branch: str, pr_feedback_text: st
     )
 
 
+# openai-codex rejects prompt_cache_key values longer than 64 chars, and pi
+# forwards --session-id verbatim as that key.
+SESSION_ID_MAX_LENGTH = 64
+
+
+def attempt_session_id(run_id: str, attempt_number: int) -> str:
+    """Derive a per-attempt pi session id bounded to SESSION_ID_MAX_LENGTH.
+
+    Uses only the unique parts of the run id (timestamp + hex suffix), dropping
+    the task slug so the id stays short regardless of task length. Run ids look
+    like ``run-<timestamp>-<slug>-<hex4>``.
+    """
+    parts = [part for part in run_id.split("-") if part]
+    timestamp = parts[1] if len(parts) > 1 else parts[0] if parts else run_id
+    token = parts[-1] if len(parts) > 2 else ""
+    core = "-".join(part for part in ("run", timestamp, token) if part)
+    session_id = f"{core}-a{attempt_number}"
+    if len(session_id) > SESSION_ID_MAX_LENGTH:
+        suffix = f"-a{attempt_number}"
+        session_id = session_id[: SESSION_ID_MAX_LENGTH - len(suffix)] + suffix
+    return session_id
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -335,7 +358,7 @@ class Orchestrator:
                 f"attempt {attempt_number} prompt ready",
             )
 
-            session_id = f"{run_id}-attempt-{attempt_number}"
+            session_id = attempt_session_id(run_id, attempt_number)
             session_dir = attempt_dir / "pi-session"
             record = self._transition(
                 worktree,

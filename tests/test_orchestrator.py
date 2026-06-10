@@ -1,4 +1,5 @@
 import json
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -9,7 +10,7 @@ from bd1.config import default_workspace_config
 from bd1.errors import Bd1Error, DirtyRepositoryError, PrError
 from bd1.git import get_status_porcelain
 from bd1.models import RunState
-from bd1.orchestrator import Orchestrator, compile_execution_prompt
+from bd1.orchestrator import Orchestrator, attempt_session_id, compile_execution_prompt
 from bd1.pr import PrCheck, PrFeedbackItem, PrResult
 from bd1.run_index import RunIndex
 from tests.fakes import (
@@ -342,6 +343,33 @@ def test_dirty_worktree_resumes_same_session_with_exact_prompt(tmp_path, init_gi
     assert record.state is RunState.COMPLETE
     assert pi.prompts[1] == "commit and resolve before exit"
     assert pi.session_ids[0] == pi.session_ids[1]
+
+
+def test_session_ids_stay_within_provider_cap_for_long_tasks(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    pi = FakePiRunner()
+    orchestrator = make_orchestrator(tmp_path, pi_runner=pi, vet_runner=FakeVetRunner([0]))
+    task = (
+        "harden meeting url validation in meeting bridge assert meeting url rejects "
+        "unsupported schemes and unexpected hosts before joining the call so that the "
+        "bridge never dials an attacker-controlled endpoint"
+    )
+    assert len(task) >= 200
+
+    record = orchestrator.run(make_config(repo), task)
+
+    assert record.state is RunState.COMPLETE
+    assert pi.session_ids
+    for session_id in pi.session_ids:
+        assert len(session_id) <= 64
+    assert re.fullmatch(r"run-\d{8}T\d{6}Z-[0-9a-f]{4}-a1", pi.session_ids[0])
+
+
+def test_attempt_session_id_truncates_pathological_run_ids_keeping_attempt():
+    session_id = attempt_session_id(f"run-{'9' * 80}-abcd", 12)
+
+    assert len(session_id) == 64
+    assert session_id.endswith("-a12")
 
 
 def test_missing_pi_session_blocks_before_vet(tmp_path, init_git_repo):
