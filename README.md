@@ -1,6 +1,10 @@
 # bd-1
 
-`bd-1` is a local CLI for running a coding task through an isolated worktree, Pi execution, Vet verification, a review gate, PR feedback, and learning capture.
+<p align="center">
+  <img src="assets/hero.png" alt="A glowing orbital loop passing through five gates — discover, plan, execute, verify, merge — feeding a crystalline memory core at its center" width="100%">
+</p>
+
+`bd-1` is a local CLI for running a coding task through an isolated worktree, Pi execution, Vet verification, a review gate, PR feedback, and learning capture. Every run feeds a durable learning store that the next run inherits — each unit of work makes the next one easier.
 
 The current MVP is Python + uv. Files are authoritative: each run writes `.sessions/<run-id>/run-record.json` in the task worktree, while the global SQLite database under `~/.bd-1` acts as a rebuildable index.
 
