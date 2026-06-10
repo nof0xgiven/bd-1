@@ -1,7 +1,7 @@
 {
   "run_id": "run_2026_06_09_add_webhook_retry",
   "task": "Add webhook retry behavior",
-  "workspace": "kahunas-api",
+  "workspace": "demo-api",
   "base_commit": "abc123",
   "branch": "compound/add-webhook-retry",
   "state": "LEARNING_COMPLETE",
