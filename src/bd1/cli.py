@@ -36,9 +36,11 @@ def build_parser() -> argparse.ArgumentParser:
     workspace_add.add_argument("--product", required=True)
     workspace_add.add_argument("--setup-script", default="")
     workspace_add.add_argument("--default-branch", default="")
+    workspace_add.add_argument("--profile", choices=("agentic", "keyword"), default="agentic")
     workspace_subcommands.add_parser("list")
     workspace_profile = workspace_subcommands.add_parser("profile")
     workspace_profile.add_argument("workspace")
+    workspace_profile.add_argument("--profile", choices=("agentic", "keyword"), default="agentic")
 
     run = subcommands.add_parser("run")
     run.add_argument("task", nargs="?")
@@ -108,6 +110,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _handle_workspace(argparse_namespace: argparse.Namespace, registry: WorkspaceRegistry) -> int:
     if argparse_namespace.workspace_command == "add":
+        reasoning_factory = None
+        if argparse_namespace.profile == "agentic":
+            reasoning_factory = _build_profile_reasoning
         result = add_workspace(
             argparse_namespace.name,
             argparse_namespace.repo,
@@ -115,6 +120,7 @@ def _handle_workspace(argparse_namespace: argparse.Namespace, registry: Workspac
             setup_script=argparse_namespace.setup_script,
             default_branch=argparse_namespace.default_branch,
             registry=registry,
+            reasoning_factory=reasoning_factory,
         )
         print(result.guidance)
         return 0
@@ -126,12 +132,22 @@ def _handle_workspace(argparse_namespace: argparse.Namespace, registry: Workspac
 
     if argparse_namespace.workspace_command == "profile":
         config = registry.get(argparse_namespace.workspace)
-        profile_workspace(config)
+        reasoning = None
+        if argparse_namespace.profile == "agentic":
+            reasoning = _build_profile_reasoning(config)
+        profile_workspace(config, reasoning=reasoning)
         print(f"Profile artifacts written for workspace {config.name}")
         return 0
 
     parser_error = f"Unknown workspace command: {argparse_namespace.workspace_command}"
     raise SystemExit(parser_error)
+
+
+def _build_profile_reasoning(config: WorkspaceConfig):
+    try:
+        return _build_reasoning(config)
+    except WorkspaceConfigError:
+        return None  # keyword fallback; doctor reports the missing dspy_model
 
 
 def resolve_workspace(

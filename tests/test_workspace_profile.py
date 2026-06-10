@@ -2,6 +2,8 @@ import subprocess
 
 import pytest
 
+from bd1.config import default_workspace_config
+from bd1.dspy_programs import ProfileOutput
 from bd1.errors import DirtyRepositoryError, WorkspaceConfigError
 from bd1.registry import WorkspaceRegistry
 from bd1.workspace import add_workspace, profile_workspace
@@ -95,3 +97,81 @@ def test_profile_unknown_sections_use_exact_fallback(tmp_path, init_git_repo):
     assert (repo / ".artifacts" / "design.md").read_text(
         encoding="utf-8"
     ).strip() == "No evidence found in scanned files."
+
+
+class _RecordingProfiler:
+    def __init__(self):
+        self.calls = []
+
+    def profile(self, *, repo_evidence, product_description):
+        self.calls.append((repo_evidence, product_description))
+        artifacts = {
+            key: f"agentic {key}"
+            for key in ("architecture", "system_patterns", "testing", "design", "rules", "product")
+        }
+        return ProfileOutput(artifacts=artifacts)
+
+
+def test_profile_workspace_prefers_reasoning_when_provided(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+    profiler = _RecordingProfiler()
+
+    written = profile_workspace(config, reasoning=profiler)
+
+    assert (repo / ".artifacts" / "architecture.md").read_text(
+        encoding="utf-8"
+    ) == "agentic architecture"
+    assert len(written) == 6
+    assert profiler.calls and "demo product" in profiler.calls[0][1]
+
+
+def test_profile_workspace_keyword_fallback_without_reasoning(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+
+    profile_workspace(config)
+
+    assert (repo / ".artifacts" / "product.md").exists()
+
+
+def test_profile_workspace_falls_back_when_reasoning_fails(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+
+    class _Exploding:
+        def profile(self, **kwargs):
+            raise RuntimeError("LM down")
+
+    written = profile_workspace(config, reasoning=_Exploding())
+
+    assert len(written) == 6
+    assert (repo / ".artifacts" / "profile-warning.md").exists()
+    assert "demo product" in (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
+
+
+def test_add_workspace_passes_factory_built_reasoning(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    profiler = _RecordingProfiler()
+    factory_configs = []
+
+    def factory(config):
+        factory_configs.append(config)
+        return profiler
+
+    add_workspace(
+        "demo",
+        repo,
+        "Demo product",
+        registry=WorkspaceRegistry(tmp_path / "state"),
+        reasoning_factory=factory,
+    )
+
+    assert [config.name for config in factory_configs] == ["demo"]
+    assert (repo / ".artifacts" / "rules.md").read_text(encoding="utf-8") == "agentic rules"

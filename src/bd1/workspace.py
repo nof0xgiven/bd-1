@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from bd1.artifacts import ensure_global_dirs, ensure_workspace_dirs, write_text
 from bd1.config import default_workspace_config, write_workspace_config
-from bd1.errors import WorkspaceConfigError
+from bd1.errors import ReasoningOutputError, WorkspaceConfigError
 from bd1.git import default_branch as detect_default_branch
 from bd1.git import ensure_clean_repo, ensure_git_repo
 from bd1.models import WorkspaceConfig
 from bd1.paths import global_state_dir
 from bd1.registry import WorkspaceRegistry
+from bd1.repo_tools import RepoTools
 
 NO_EVIDENCE = "No evidence found in scanned files."
 
@@ -48,6 +50,7 @@ def add_workspace(
     setup_script: str = "",
     default_branch: str = "",
     registry: WorkspaceRegistry | None = None,
+    reasoning_factory: Callable[[WorkspaceConfig], object] | None = None,
 ) -> WorkspaceAddResult:
     if not WORKSPACE_NAME_RE.fullmatch(name):
         raise WorkspaceConfigError(
@@ -70,7 +73,8 @@ def add_workspace(
         default_branch=default_branch or detect_default_branch(repo_path),
     )
     write_workspace_config(repo_path, config)
-    profile_workspace(config)
+    # The factory takes the freshly built config: it does not exist before here.
+    profile_workspace(config, reasoning=reasoning_factory(config) if reasoning_factory else None)
     active_registry.add(config)
 
     guidance = (
@@ -81,12 +85,54 @@ def add_workspace(
     return WorkspaceAddResult(config=config, guidance=guidance)
 
 
-def profile_workspace(config: WorkspaceConfig) -> list[Path]:
+def profile_workspace(config: WorkspaceConfig, reasoning=None) -> list[Path]:
     repo_path = Path(config.repo_path).expanduser().resolve()
     ensure_workspace_dirs(repo_path)
     sources = _read_profile_sources(repo_path)
 
-    profile = {
+    profile: dict[str, str] | None = None
+    if reasoning is not None:
+        try:
+            profile = _agentic_profile(repo_path, config, sources, reasoning)
+        except Exception as exc:
+            # A configured-but-unusable LM must not abort `workspace add`;
+            # the keyword heuristic is the documented fallback.
+            write_text(
+                repo_path / ".artifacts" / "profile-warning.md",
+                f"Agentic profiling failed; keyword fallback used.\n\n{exc}\n",
+            )
+    if profile is None:
+        profile = _keyword_profile(config, sources)
+
+    written = []
+    for key, filename in PROFILE_ARTIFACTS.items():
+        written.append(write_text(repo_path / ".artifacts" / filename, profile[key]))
+    return written
+
+
+def _agentic_profile(
+    repo_path: Path,
+    config: WorkspaceConfig,
+    sources: list[SourceEvidence],
+    reasoning,
+) -> dict[str, str]:
+    tree = RepoTools(repo_path).list_tree()
+    excerpts = "\n\n".join(
+        f"## {source.relative_path}\n\n{source.text[:4000]}" for source in sources
+    )
+    output = reasoning.profile(
+        repo_evidence=f"# File tree\n{tree}\n\n# Key files\n{excerpts}",
+        product_description=config.product_description,
+    )
+    profile = dict(output.artifacts)
+    missing = set(PROFILE_ARTIFACTS) - set(profile)
+    if missing:
+        raise ReasoningOutputError(f"Profile missing artifact(s): {', '.join(sorted(missing))}")
+    return profile
+
+
+def _keyword_profile(config: WorkspaceConfig, sources: list[SourceEvidence]) -> dict[str, str]:
+    return {
         "architecture": _render_evidence(
             _matching_sources(
                 sources,
@@ -133,11 +179,6 @@ def profile_workspace(config: WorkspaceConfig) -> list[Path]:
             ]
         ),
     }
-
-    written = []
-    for key, filename in PROFILE_ARTIFACTS.items():
-        written.append(write_text(repo_path / ".artifacts" / filename, profile[key]))
-    return written
 
 
 def _read_profile_sources(repo: Path) -> list[SourceEvidence]:

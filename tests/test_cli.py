@@ -72,6 +72,7 @@ def test_main_catches_bd1_errors(tmp_path, monkeypatch, capsys):
 def test_workspace_add_list_and_profile_cli(tmp_path, init_git_repo, monkeypatch, capsys):
     repo = init_git_repo(tmp_path / "repo")
     monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
 
     assert (
         main(
@@ -101,6 +102,57 @@ def test_workspace_add_list_and_profile_cli(tmp_path, init_git_repo, monkeypatch
     assert "Profile artifacts written for workspace demo" in profile_output.out
 
 
+def test_workspace_add_default_profile_uses_reasoning(tmp_path, init_git_repo, monkeypatch):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
+
+    args = [
+        "workspace",
+        "add",
+        "--name",
+        "demo",
+        "--repo",
+        str(repo),
+        "--product",
+        "Demo product",
+    ]
+    assert main(args) == 0
+
+    product = (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
+    assert "Template profile." in product
+
+
+def test_workspace_add_profile_keyword_skips_reasoning(tmp_path, init_git_repo, monkeypatch):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
+
+    args = [
+        "workspace",
+        "add",
+        "--name",
+        "demo",
+        "--repo",
+        str(repo),
+        "--product",
+        "Demo product",
+        "--profile",
+        "keyword",
+    ]
+    assert main(args) == 0
+
+    product = (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
+    assert "Template profile." not in product
+    assert "Demo product" in product
+
+    # The profile subcommand honors the same escape hatch.
+    (repo / ".artifacts" / "product.md").unlink()
+    assert main(["workspace", "profile", "demo", "--profile", "keyword"]) == 0
+    product = (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
+    assert "Template profile." not in product
+
+
 def test_doctor_reports_failures_with_nonzero_exit(tmp_path, init_git_repo, monkeypatch, capsys):
     repo = init_git_repo(tmp_path / "repo")
     monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
@@ -115,6 +167,8 @@ def test_doctor_reports_failures_with_nonzero_exit(tmp_path, init_git_repo, monk
                 str(repo),
                 "--product",
                 "Demo product",
+                "--profile",
+                "keyword",
             ]
         )
         == 0

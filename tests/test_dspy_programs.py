@@ -482,3 +482,10 @@ def test_dspy_profile_raises_on_empty_required_field():
     programs = DspyReasoningPrograms(profiler=_stub_program(prediction))
     with pytest.raises(ReasoningOutputError):
         programs.profile(repo_evidence="tree", product_description="p")
+
+
+def test_profile_fields_match_workspace_artifact_keys():
+    from bd1.dspy_programs import _PROFILE_FIELDS
+    from bd1.workspace import PROFILE_ARTIFACTS
+
+    assert set(_PROFILE_FIELDS) == set(PROFILE_ARTIFACTS)
