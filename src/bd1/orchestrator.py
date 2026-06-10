@@ -67,15 +67,34 @@ def compile_execution_prompt(
             f"Task worktree: {worktree_root}",
             f"Discovery context path: {discovery_context_path}",
             f"Implementation plan path: {plan_path}",
+            "You execute the plan. You do NOT re-plan or explore other domains.",
             "Read `.artifacts/` documentation before editing.",
-            "Work only in the task worktree.",
-            "For meaningful behavior changes, write the smallest failing real test first.",
+            "Work only in the task worktree, never on the main branch.",
+            "## Testing doctrine",
+            "Use strict Red -> Green -> Refactor for meaningful behavior changes: "
+            "write the smallest failing real test first, do not change production "
+            "code before the failing test exists, refactor only while green.",
+            "No mock-only tests: prefer tests that exercise real functions, real "
+            "handlers, and real component interactions. If a test would pass even "
+            "when the feature is broken, delete it.",
+            "Mechanical-only changes (formatting, docs, renames) may skip the red step.",
+            "## Implementation rules",
+            "Before adding helpers or shared behavior, check whether an existing "
+            "helper or pattern already exists.",
+            "Do not invent APIs, env vars, CLI flags, package behavior, or library "
+            "APIs. If you are about to write 'likely' or 'probably', stop and find "
+            "a definitive answer first.",
             "Modify only files required by the task and plan.",
             "Run focused tests and required quality gates.",
             "Commit changes before exit.",
             "Resolve pre-commit failures without workarounds or hacks.",
             "Leave the worktree clean before exit.",
-            f"Write completion summary to {completion_summary_path}.",
+            "## Completion summary (proof of work)",
+            f"Write the completion summary to {completion_summary_path} with sections: "
+            "'Changes Made' (grouped by file), 'Quality Validation' (each check run "
+            "and its result), 'Proof of Work' (concrete evidence the change works: "
+            "test output, command output, before/after behavior), and "
+            "'Notes and Assumptions'.",
         ]
     )
 

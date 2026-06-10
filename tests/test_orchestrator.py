@@ -93,6 +93,23 @@ def test_execution_prompt_contains_executor_contract_clauses():
         assert clause in prompt
 
 
+def test_execution_prompt_encodes_tdd_and_proof_doctrine():
+    prompt = compile_execution_prompt(
+        task="add feature",
+        discovery_context_path="/wt/.artifacts/context/add-feature.md",
+        plan_path="/wt/.artifacts/plans/add-feature.md",
+        workspace_root="/repo",
+        worktree_root="/wt",
+        completion_summary_path="/wt/.artifacts/completed/add-feature.md",
+    )
+    lower = prompt.lower()
+    assert "red" in lower and "green" in lower
+    assert "mock" in lower
+    assert "proof" in lower
+    assert "do not invent" in lower
+    assert "changes made" in lower and "quality validation" in lower
+
+
 def test_happy_path_persists_transitions_and_is_indexable(tmp_path, init_git_repo):
     repo = init_git_repo(tmp_path / "repo")
     orchestrator = make_orchestrator(
