@@ -95,6 +95,24 @@ There is no prompt directory; the live prompts ship in code:
 
 Editing those docstrings, field descriptions, and `compile_*_prompt` functions is the supported way to customize bd-1's behavior.
 
+## External research tools (MCP)
+
+Discovery can call external research tools (code search, library docs) through any stdio MCP server. The knob is `discovery_mcp_servers` in `.bd-1.toml`: a list of shell-style command strings, one per server. Default is empty — out-of-the-box runs make zero network calls.
+
+Two free servers that restore the original design's external research leg:
+
+```toml
+discovery_mcp_servers = ["npx -y exa-mcp-server", "npx -y @upstash/context7-mcp"]
+```
+
+- **Exa** (code/web search) needs `EXA_API_KEY` in the environment (free tier available).
+- **Context7** (library docs) works keyless.
+- Both require Node (`npx`).
+
+The configured server commands are executed with your privileges — the same trust level as `setup_script` and `pi_command` — so only list servers you trust.
+
+Failures degrade gracefully: a server that fails to start (or hangs past a 20s startup timeout) is skipped with a stderr warning, and discovery continues with the repo tools.
+
 ## Inspect runs
 
 Print the authoritative run record and refresh the SQLite index:
@@ -183,6 +201,7 @@ Learnings and DSPy examples are stored globally under `<BD1_HOME>/learning/<work
 | `dspy_model` | `"openai/gpt-5-mini"` | Model for DSPy reasoning programs. |
 | `dspy_num_retries` | `3` | LM-level retries for transient DSPy/provider failures. |
 | `discovery_max_iters` | `12` | Max tool-calling iterations for ReAct discovery. |
+| `discovery_mcp_servers` | `[]` | Stdio MCP server commands providing external research tools for discovery (see "External research tools (MCP)"). |
 | `dirty_exit_prompt` | `"commit and resolve before exit"` | Prompt used when Pi exits with uncommitted work. |
 | `pr_command` | `"gh"` | GitHub CLI used for the PR lifecycle. |
 | `pr_monitor_wait_seconds` | `600` | Delay before each PR monitor poll. Use `0` only for tests or controlled smoke runs. |

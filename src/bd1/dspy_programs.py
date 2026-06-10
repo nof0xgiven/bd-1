@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import re
 import sys
+from collections.abc import Sequence
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -20,9 +24,11 @@ class DiscoverTaskContext(dspy.Signature):
     it must enable a correct implementation on the first attempt. Do not assume —
     if you cannot prove a claim from the repository evidence, label it explicitly
     as an ambiguity under 'Potential Gotchas'. Find a source of truth for the
-    change: an existing reference implementation in this repository, or an
-    example from the external_examples input if one is provided. If neither
-    exists, record under 'Potential Gotchas' that no source of truth was found —
+    change: an existing reference implementation in this repository, an
+    example from the external_examples input if one is provided, or a proven
+    example retrieved with the external research tools in your tool list,
+    citing what you retrieved. If no such evidence exists, record under
+    'Potential Gotchas' that no source of truth was found —
     never invent a citation. Prefer minimal-but-sufficient inclusion:
     everything the coding agent needs, nothing irrelevant. For every file excerpt
     include the file path; for files to read, explain why each matters. Surface
@@ -51,8 +57,10 @@ class DiscoverTaskContext(dspy.Signature):
             "'# Context Package: <short task title>', "
             "'## Task Understanding' (2-3 sentences, type, scope, complexity), "
             "'## Source of Truth' (an existing reference implementation in this "
-            "repo, or an example from the external_examples input if one is "
-            "provided; if neither exists, say so here and under '## Potential "
+            "repo, an example from the external_examples input if one is "
+            "provided, or a proven example retrieved with the external research "
+            "tools in your tool list, citing what you retrieved; if no such "
+            "evidence exists, say so here and under '## Potential "
             "Gotchas' — never invent a citation), "
             "'## Architecture Overview' (relevant modules and data flow), "
             "'## Files to Read' (table: file, lines, why), "
@@ -453,13 +461,29 @@ class LearningProgram(dspy.Module):
         )
 
 
-def build_discovery_react(repo_root: str, max_iters: int):
-    """Default factory: a dspy.ReAct over DiscoverTaskContext with repo tools."""
+def build_discovery_react(repo_root: str, max_iters: int, extra_tools: Sequence[Any] = ()):
+    """Default factory: a dspy.ReAct over DiscoverTaskContext with repo tools.
+
+    ``extra_tools`` appends external research tools (e.g. MCP-backed dspy
+    Tools) after the repo tools.
+    """
     tools = RepoTools(repo_root)
     return dspy.ReAct(
         DiscoverTaskContext,
-        tools=[tools.list_tree, tools.read_file, tools.search_text],
+        tools=[tools.list_tree, tools.read_file, tools.search_text, *extra_tools],
         max_iters=max_iters,
+    )
+
+
+def _ensure_no_running_event_loop() -> None:
+    """Raise RuntimeError if called from inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        "asyncio.run() cannot be called from a running event loop; "
+        "MCP-backed discovery requires a synchronous calling context"
     )
 
 
@@ -474,8 +498,10 @@ class DspyReasoningPrograms:
         profiler: Any | None = None,
         discovery_max_iters: int = 12,
         discovery_react_factory: Any | None = None,
+        discovery_mcp_servers: list[str] | None = None,
     ) -> None:
         self._discovery_max_iters = discovery_max_iters
+        self._discovery_mcp_servers = list(discovery_mcp_servers or [])
         self._discovery = discovery or DiscoveryProgram()
         self._planner = planner or PlanningProgram()
         self._reviewer = reviewer or ReviewProgram()
@@ -492,8 +518,17 @@ class DspyReasoningPrograms:
             external_examples=evidence.extra_context,
         )
         try:
-            react = self._discovery_react_factory(evidence.repo_path, self._discovery_max_iters)
-            prediction = react(**inputs)
+            if self._discovery_mcp_servers:
+                # asyncio.run cannot be used while a loop is already running
+                # (embedding scenarios). Detect that BEFORE constructing the
+                # coroutine — handing an unrunnable coroutine to asyncio.run
+                # leaks a "never awaited" RuntimeWarning. The raise lands in
+                # the except below and degrades to the single-shot fallback.
+                _ensure_no_running_event_loop()
+                prediction = asyncio.run(self._discover_async(evidence.repo_path, inputs))
+            else:
+                react = self._discovery_react_factory(evidence.repo_path, self._discovery_max_iters)
+                prediction = react(**inputs)
             markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
             return DiscoveryOutput(markdown=markdown)
         except Exception as exc:
@@ -515,6 +550,27 @@ class DspyReasoningPrograms:
                 f"({type(exc).__name__}: {str(exc)[:200]}); single-shot fallback was used.\n"
             )
             return DiscoveryOutput(markdown=markdown + note)
+
+    async def _discover_async(self, repo_root: str, inputs: dict[str, Any]) -> Any:
+        """ReAct discovery with MCP research tools; sessions live for the call.
+
+        MCP servers are best-effort (open_mcp_tools skips failures), so a dead
+        server degrades to a repo-tools-only ReAct, never to single-shot.
+        """
+        from bd1.mcp_tools import open_mcp_tools
+
+        async with AsyncExitStack() as stack:
+            mcp_tools = await open_mcp_tools(self._discovery_mcp_servers, stack)
+            react = self._discovery_react_factory(
+                repo_root, self._discovery_max_iters, extra_tools=mcp_tools
+            )
+            # dspy.ReAct exposes acall for async tools; injected doubles may
+            # be plain sync callables. Prefer acall, await if awaitable.
+            call = getattr(react, "acall", react)
+            prediction = call(**inputs)
+            if inspect.isawaitable(prediction):
+                prediction = await prediction
+            return prediction
 
     def plan(self, evidence: EvidencePackage, *, discovery_context: str) -> PlanOutput:
         prediction = self._planner(

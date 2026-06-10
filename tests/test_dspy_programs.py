@@ -81,13 +81,15 @@ def test_discovery_context_package_field_carries_output_template():
 
 
 def test_source_of_truth_is_scoped_to_provable_evidence():
-    # Discovery has only repo tools plus the external_examples input: a
-    # missing source of truth must be recorded, never invented as a citation.
-    # Docstring and field desc state the same rule.
+    # Discovery has repo tools, the external_examples input, and (when
+    # configured) external research tools via MCP: a missing source of truth
+    # must be recorded, never invented as a citation. Docstring and field
+    # desc state the same rule, including the conditional tool leg.
     doc = DiscoverTaskContext.__doc__
     desc = DiscoverTaskContext.output_fields["context_package_markdown"].json_schema_extra["desc"]
     for text in (doc, desc):
         assert "external_examples" in text
+        assert "external research tools" in text
         assert "never invent a citation" in text
 
 
@@ -456,6 +458,134 @@ def test_discover_react_factory_receives_repo_path_and_max_iters(tmp_path):
 
     assert seen["root"] == str(tmp_path)
     assert seen["max_iters"] == 9
+
+
+def _fixture_server_command() -> str:
+    import shlex
+    import sys as _sys
+    from pathlib import Path
+
+    fixture = Path(__file__).parent / "fixtures" / "echo_mcp_server.py"
+    return f"{shlex.quote(_sys.executable)} {shlex.quote(str(fixture))}"
+
+
+def test_discover_with_mcp_servers_builds_react_over_repo_and_mcp_tools(tmp_path):
+    seen = {}
+
+    def factory(root, max_iters, extra_tools=()):
+        real = build_discovery_react(root, max_iters, extra_tools=extra_tools)
+        seen["tool_names"] = set(real.tools.keys())
+        seen["max_iters"] = max_iters
+
+        class AsyncReact:
+            async def acall(self, **kwargs):
+                seen["inputs"] = kwargs
+                return SimpleNamespace(context_package_markdown="# Context Package: via mcp react")
+
+        return AsyncReact()
+
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=factory,
+        discovery_max_iters=5,
+        discovery_mcp_servers=[_fixture_server_command()],
+    )
+
+    output = programs.discover(_react_evidence(tmp_path, workspace_artifacts="THE-ARTIFACTS"))
+
+    assert "via mcp react" in output.markdown
+    assert fallback.calls == []
+    assert {"list_tree", "read_file", "search_text", "echo"}.issubset(seen["tool_names"])
+    assert seen["max_iters"] == 5
+    assert seen["inputs"]["workspace_artifacts"] == "THE-ARTIFACTS"
+
+
+def test_discover_with_all_mcp_servers_failing_still_runs_repo_only_react(tmp_path, capsys):
+    # MCP failure must not force the single-shot fallback: the ReAct still
+    # runs with repo tools only.
+    seen = {}
+
+    def factory(root, max_iters, extra_tools=()):
+        seen["extra_tools"] = list(extra_tools)
+
+        def react(**kwargs):
+            return SimpleNamespace(context_package_markdown="# Context Package: repo only")
+
+        return react
+
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=factory,
+        discovery_mcp_servers=["definitely-not-a-real-binary-xyz"],
+    )
+
+    output = programs.discover(_react_evidence(tmp_path))
+
+    assert "repo only" in output.markdown
+    assert fallback.calls == []
+    assert seen["extra_tools"] == []
+    stderr = capsys.readouterr().err
+    assert "bd-1: mcp server failed, continuing without it" in stderr
+    assert "single-shot fallback" not in stderr
+
+
+def test_discover_with_mcp_servers_inside_running_loop_falls_back_without_warning(
+    tmp_path, capsys, recwarn
+):
+    # Embedding scenarios: discover() called from inside a running event loop
+    # cannot use asyncio.run. It must fall back to single-shot discovery
+    # without leaking an unawaited _discover_async coroutine (RuntimeWarning).
+    import asyncio
+    import gc
+
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=lambda root, max_iters, extra_tools=(): _ExplodingReact(),
+        discovery_mcp_servers=["definitely-not-a-real-binary-xyz"],
+    )
+
+    async def call_from_running_loop():
+        return programs.discover(_react_evidence(tmp_path))
+
+    output = asyncio.run(call_from_running_loop())
+    gc.collect()  # force collection so any unawaited coroutine warns now
+
+    assert "single-shot fallback" in output.markdown.lower()
+    assert len(fallback.calls) == 1
+    assert "tool-using discovery failed" in capsys.readouterr().err
+    runtime_warnings = [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)]
+    assert runtime_warnings == []
+
+
+def test_discover_with_mcp_servers_falls_back_when_react_itself_fails(tmp_path, capsys):
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=lambda root, max_iters, extra_tools=(): _ExplodingReact(),
+        discovery_mcp_servers=["definitely-not-a-real-binary-xyz"],
+    )
+
+    output = programs.discover(_react_evidence(tmp_path))
+
+    assert "fallback" in output.markdown
+    assert "react exhausted" in output.markdown
+    assert len(fallback.calls) == 1
+    assert "tool-using discovery failed" in capsys.readouterr().err
+
+
+def test_build_discovery_react_registers_extra_tools_after_repo_tools(tmp_path):
+    import dspy
+
+    def fetch_docs(query: str) -> str:
+        """Fetch documentation for a query."""
+        return query
+
+    react = build_discovery_react(str(tmp_path), 7, extra_tools=[dspy.Tool(fetch_docs)])
+
+    assert {"list_tree", "read_file", "search_text", "fetch_docs"}.issubset(react.tools.keys())
 
 
 def test_build_discovery_react_registers_repo_tools_and_max_iters(tmp_path):
