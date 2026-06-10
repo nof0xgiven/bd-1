@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import shutil
 import traceback
 from dataclasses import replace
 from pathlib import Path
@@ -97,9 +98,26 @@ class Orchestrator:
         self._pi_runner = pi_runner
         self._vet_runner = vet_runner
         self._pr_runner = pr_runner
+        self._using_real_runners = pi_runner is None and vet_runner is None and pr_runner is None
         self.run_store = run_store or RunStore(self.global_root)
 
     def run(self, config: WorkspaceConfig, task: str) -> RunRecord:
+        if self._using_real_runners:
+            missing = [
+                binary
+                for binary in (
+                    shlex.split(command)[0]
+                    for command in ("git", config.pi_command, config.vet_command, config.pr_command)
+                    if command.strip()
+                )
+                if shutil.which(binary) is None
+            ]
+            if missing:
+                raise Bd1Error(
+                    "Missing required executable(s): "
+                    + ", ".join(missing)
+                    + ". Run `bd-1 doctor` for details."
+                )
         pi_runner = self._pi_runner or PiRunner(
             pi_command=config.pi_command,
             pi_model=config.pi_model,

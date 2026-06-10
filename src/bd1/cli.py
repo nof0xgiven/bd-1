@@ -62,6 +62,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--learning-candidate", action=argparse.BooleanOptionalAction, default=True
     )
 
+    doctor = subcommands.add_parser("doctor")
+    doctor.add_argument("--workspace", default=None)
+
     return parser
 
 
@@ -95,6 +98,8 @@ def main(argv: list[str] | None = None) -> int:
             return _handle_clean(args, registry, state_dir)
         if args.command == "feedback":
             return _handle_feedback(args, registry, state_dir)
+        if args.command == "doctor":
+            return _handle_doctor(args, registry)
         return 0
     except Bd1Error as exc:
         print(str(exc), file=sys.stderr)
@@ -288,6 +293,24 @@ def _handle_feedback(
             file=sys.stderr,
         )
     return 0
+
+
+def _handle_doctor(args: argparse.Namespace, registry: WorkspaceRegistry) -> int:
+    import shlex
+
+    from bd1.doctor import run_checks
+    from bd1.subprocesses import run_command
+
+    config = resolve_workspace(args.workspace, Path.cwd(), registry)
+    binaries = tuple(
+        shlex.split(command)[0]
+        for command in ("git", config.pi_command, config.vet_command, config.pr_command)
+        if command.strip()
+    )
+    results = run_checks(binaries=binaries, runner=run_command, dspy_model=config.dspy_model)
+    for result in results:
+        print(f"{'ok ' if result.ok else 'FAIL'} {result.name}: {result.detail}")
+    return 0 if all(result.ok for result in results) else 1
 
 
 def _build_reasoning_for_run(workspace_name: str, registry: WorkspaceRegistry):

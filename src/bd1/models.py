@@ -115,7 +115,12 @@ class WorkspaceConfig:
             raise WorkspaceConfigError("dspy_num_retries must be an integer >= 0")
         if not isinstance(max_iters, int) or max_iters < 1:
             raise WorkspaceConfigError("discovery_max_iters must be an integer >= 1")
-        return cls(**data)
+        try:
+            return cls(**data)
+        except TypeError as exc:
+            raise WorkspaceConfigError(
+                f"Workspace config is missing required key(s): {exc}"
+            ) from exc
 
 
 @dataclass(frozen=True)

@@ -64,6 +64,13 @@ def test_workspace_config_rejects_unknown_keys():
     assert "artifact_policy" in str(exc.value)
 
 
+def test_workspace_config_rejects_missing_required_keys():
+    with pytest.raises(WorkspaceConfigError) as exc:
+        WorkspaceConfig.from_dict({"name": "x"})
+
+    assert "missing required key(s)" in str(exc.value)
+
+
 def test_workspace_config_preserves_pr_lifecycle_fields():
     config = default_workspace_config("demo", "/tmp/repo", "Demo")
 

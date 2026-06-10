@@ -101,6 +101,34 @@ def test_workspace_add_list_and_profile_cli(tmp_path, init_git_repo, monkeypatch
     assert "Profile artifacts written for workspace demo" in profile_output.out
 
 
+def test_doctor_reports_failures_with_nonzero_exit(tmp_path, init_git_repo, monkeypatch, capsys):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    assert (
+        main(
+            [
+                "workspace",
+                "add",
+                "--name",
+                "demo",
+                "--repo",
+                str(repo),
+                "--product",
+                "Demo product",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    monkeypatch.setattr("bd1.doctor.shutil.which", lambda name: None)
+
+    assert main(["doctor", "--workspace", "demo"]) == 1
+
+    output = capsys.readouterr().out
+    assert "FAIL binary:git" in output
+    assert "git not found on PATH" in output
+
+
 class FakeOrchestrator:
     calls: ClassVar[list] = []
 

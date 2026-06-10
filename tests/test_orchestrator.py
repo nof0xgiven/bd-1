@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from bd1.config import default_workspace_config
-from bd1.errors import DirtyRepositoryError, PrError
+from bd1.errors import Bd1Error, DirtyRepositoryError, PrError
 from bd1.git import get_status_porcelain
 from bd1.models import RunState
 from bd1.orchestrator import Orchestrator, compile_execution_prompt
@@ -42,6 +42,19 @@ def test_dirty_base_fails_before_worktree_creation(tmp_path, init_git_repo):
     with pytest.raises(DirtyRepositoryError):
         orchestrator.run(make_config(repo), "Fix bug")
 
+    assert not (tmp_path / "global" / "worktrees").exists()
+
+
+def test_real_runner_preflight_fails_fast_on_missing_binaries(tmp_path, init_git_repo, monkeypatch):
+    repo = init_git_repo(tmp_path / "repo")
+    orchestrator = Orchestrator(global_root=tmp_path / "global", reasoning=FakeReasoning(["PASS"]))
+    monkeypatch.setattr("bd1.orchestrator.shutil.which", lambda name: None)
+
+    with pytest.raises(Bd1Error) as exc:
+        orchestrator.run(make_config(repo), "Fix bug")
+
+    assert "doctor" in str(exc.value)
+    assert "git" in str(exc.value)
     assert not (tmp_path / "global" / "worktrees").exists()
 
 
