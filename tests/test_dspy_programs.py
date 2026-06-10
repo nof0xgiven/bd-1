@@ -59,6 +59,17 @@ def test_review_signature_is_binary_without_revision_prompt():
     assert "PASS | FAIL" in DecideReviewOutcome.output_fields["verdict"].json_schema_extra["desc"]
 
 
+def test_signature_docstrings_encode_original_doctrines():
+    assert "binary" in DecideReviewOutcome.__doc__.lower()
+    assert "production" in DecideReviewOutcome.__doc__.lower()
+    assert "mock" in DecideReviewOutcome.__doc__.lower()
+    assert "ambigu" in DiscoverTaskContext.__doc__.lower()
+    assert "source of truth" in DiscoverTaskContext.__doc__.lower()
+    assert "current-state" in CreateImplementationPlan.__doc__.lower()
+    assert "yagni" in CreateImplementationPlan.__doc__.lower()
+    assert "easier" in ExtractLearning.__doc__.lower()
+
+
 def test_review_interface_accepts_full_execution_evidence_without_live_model_calls():
     review_signature = inspect.signature(TemplateReasoningPrograms.review)
 

@@ -12,7 +12,19 @@ from bd1.evidence import EvidencePackage
 
 
 class DiscoverTaskContext(dspy.Signature):
-    """Build a task-specific implementation context package."""
+    """Build a task-specific implementation context package for a coding agent.
+
+    You are a discovery agent. Your output is the coding agent's entire world:
+    it must enable a correct implementation on the first attempt. Do not assume —
+    if you cannot prove a claim from the repository evidence, label it explicitly
+    as an ambiguity in the context package. Find a source of truth for the change:
+    either an existing reference implementation in this repository or a proven
+    external example, and cite it. Prefer minimal-but-sufficient inclusion:
+    everything the coding agent needs, nothing irrelevant. For every file excerpt
+    include the file path; for files to read, explain why each matters. Surface
+    concrete gotchas tied to this repository, constraints discovered from the
+    workspace artifacts, and how the coding agent can validate its work.
+    """
 
     task: str = dspy.InputField()
     workspace_artifacts: str = dspy.InputField()
@@ -33,7 +45,20 @@ class DiscoverTaskContext(dspy.Signature):
 
 
 class CreateImplementationPlan(dspy.Signature):
-    """Create an implementation-ready technical plan from a context package."""
+    """Create an implementation-ready technical plan from a context package.
+
+    You are a senior software architect. Assume the implementing engineer is
+    skilled but has zero context for this codebase and questionable taste:
+    document which files to touch for each step, what to check, and how to test.
+    Start from a current-state analysis: existing responsibilities, data flow,
+    and code that should be reused or extended — never duplicate what exists.
+    Prefer the smallest change that cleanly solves the problem (DRY, YAGNI, TDD,
+    frequent commits). Specify file-by-file impact with ordering constraints,
+    state/data-flow changes, error handling for each operation that can fail,
+    and edge cases (empty collections, missing values, interrupted operations).
+    Do not add layers or abstractions without a concrete benefit. Make every
+    assumption explicit and flag unknowns to validate during implementation.
+    """
 
     task: str = dspy.InputField()
     context_package: str = dspy.InputField()
@@ -50,7 +75,22 @@ class CreateImplementationPlan(dspy.Signature):
 
 
 class DecideReviewOutcome(dspy.Signature):
-    """Decide whether the worktree is safe to merge."""
+    """Decide whether the worktree is safe to merge into production right now.
+
+    You are a senior code reviewer enforcing production readiness. The decision
+    is binary: PASS means approved for production merge right now; anything that
+    clearly needs refactoring, cleanup, or more work is FAIL. Review for fit, not
+    just function: the change must match this project's architecture, patterns,
+    and conventions as documented in the workspace artifacts. The code must
+    satisfy the original task, be simple and readable, avoid duplicated logic,
+    contain no TODO/FIXME markers or leftover debug logs, handle errors at
+    external boundaries, and maintain meaningful test coverage. Testing doctrine:
+    no mock-only tests — a test that would pass even when the feature is broken
+    counts against the change. Quality warnings are acceptable; errors are not.
+    When in doubt about production readiness, treat the issue as critical and
+    do not approve. List findings as P1 (critical), P2 (major), P3 (minor):
+    P1 or P2 findings force FAIL; a PASS may carry only P3 findings.
+    """
 
     task: str = dspy.InputField()
     implementation_plan: str = dspy.InputField()
@@ -68,7 +108,18 @@ class DecideReviewOutcome(dspy.Signature):
 
 
 class ExtractLearning(dspy.Signature):
-    """Extract reusable engineering learnings from a completed run."""
+    """Extract reusable engineering learnings from a completed run.
+
+    Compound engineering: each unit of work should make subsequent units easier.
+    Analyze the run record, diff, review history, and PR feedback for mistakes
+    that were corrected, wins worth repeating, and workspace-specific constraints
+    that were discovered the hard way. Each learning must be a durable, reusable
+    rule for FUTURE tasks in this workspace — not a restatement of what this task
+    did. Reject observations that are task-specific trivia, already obvious from
+    the workspace artifacts, or speculative. Each learning needs: a rule, when it
+    applies, when to avoid it, the rationale, evidence from this run, and a
+    calibrated confidence (0.0-1.0) — overclaiming confidence pollutes the store.
+    """
 
     run_record: str = dspy.InputField()
     final_diff: str = dspy.InputField()
