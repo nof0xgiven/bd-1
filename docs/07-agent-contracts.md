@@ -1,5 +1,7 @@
 # Agent Contracts
 
+> **Historical spec.** This document records the original design and is kept as a historical record. Where it conflicts with the implementation, `README.md`, `docs/02-workflow-state-machine.md`, and `docs/06-storage-layout.md` are authoritative. Known divergences: review verdicts are binary `PASS`/`FAIL` (no `REVISE`); learnings and DSPy examples live in the global store `~/.bd-1/learning/<workspace>/`, not in-repo `.learning/`/`.examples/`; merge-triggered learning is `bd-1 sync` polling, not webhooks. See "Intentional divergences from the original spec" in `README.md`.
+
 ## Contract philosophy
 
 Every agent should have:

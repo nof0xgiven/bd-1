@@ -63,12 +63,12 @@ error instead of being recorded.
 
 The system must prevent infinite agent loops.
 
-Recommended limits:
+Implemented limits (`.bd-1.toml`):
 
 ```text
-max_execution_attempts: 3
+max_attempts: 5
 max_pr_feedback_attempts: 3
-max_total_task_runtime_minutes: configurable
+max_pr_monitor_polls: 6
 ```
 
 Execution, vet, and review failures count against `max_attempts`. PR feedback

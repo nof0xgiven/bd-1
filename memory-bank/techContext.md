@@ -50,12 +50,24 @@ Workspace `.bd-1.toml` includes:
 ```toml
 pr_command = "gh"
 pr_monitor_wait_seconds = 600
+max_pr_monitor_polls = 6
 max_pr_feedback_attempts = 3
 pr_base_branch = ""
 pr_draft = false
+pr_comment_ignore_authors = []
 ```
 
 Use `pr_monitor_wait_seconds = 0` only for tests or controlled smoke runs.
+
+## Reasoning Reliability Config
+
+```toml
+dspy_model = "openai/gpt-5-mini"
+dspy_num_retries = 3
+discovery_max_iters = 12
+```
+
+`dspy_num_retries` is passed to `dspy.LM(num_retries=...)`; `discovery_max_iters` caps the ReAct discovery tool loop. `.bd-1.toml` is read live on every command, so edits apply without re-registering. See the README configuration table for the full knob set.
 
 ## Standard Verification Commands
 
@@ -85,6 +97,6 @@ vet "history loader contract check" \
 
 - The direct `bd-1` command may not be installed globally. Prefer `uv run bd-1` inside this repo.
 - Live DSPy reasoning requires model/API configuration.
-- PR lifecycle requires `gh` authentication and repository/remote permissions at runtime.
+- PR lifecycle and `bd-1 sync` require `gh` (>= 2.59, enforced by `bd-1 doctor`) with authentication and repository/remote permissions at runtime.
 - Vet should use `--model flash` unless the user says otherwise.
 - Do not depend on raw `.sessions/` or SQLite as durable committed state.

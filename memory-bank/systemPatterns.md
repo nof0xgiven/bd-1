@@ -7,7 +7,7 @@ bd-1 separates execution, verification, review, and learning.
 - Pi performs code changes in a task worktree.
 - Vet independently checks the task, diff, and Pi transcript.
 - GitHub CLI publishing and monitoring runs after local review passes.
-- DSPy programs generate discovery, plans, review decisions, and learning content.
+- DSPy programs generate discovery, plans, review decisions, and learning content. Discovery is a `dspy.ReAct` agent over sandboxed read-only repo tools (`src/bd1/repo_tools.py`) with a single-shot fallback; profiling is agentic with a keyword fallback and visible degradation warnings.
 - RunStore writes authoritative run records to files.
 - RunIndex mirrors run records into SQLite for lookup.
 
@@ -19,12 +19,15 @@ File: `src/bd1/cli.py`
 
 Commands:
 
-- `workspace add`
+- `workspace add` (supports `--profile {agentic,keyword}`)
 - `workspace list`
-- `workspace profile`
+- `workspace profile` (supports `--profile {agentic,keyword}`)
 - `run`
 - `status`
+- `clean` (archives the full learning corpus, then removes worktree and branch)
 - `feedback`
+- `doctor` (binaries, `gh` >= 2.59, `dspy_model`)
+- `sync` (merge-triggered learning by polling `gh pr view`)
 
 Workspace resolution order:
 
@@ -39,6 +42,7 @@ File: `src/bd1/orchestrator.py`
 
 Responsibilities:
 
+- Preflight required executables (full diagnosis lives in `bd-1 doctor`).
 - Verify clean base repo.
 - Create task branch and worktree.
 - Apply task-runtime git excludes.
@@ -103,7 +107,7 @@ Important failure paths:
 - PR check, CodeRabbit, or human review feedback writes `.artifacts/pr/` feedback and loops back to Pi.
 - Repeated PR feedback blocks after `max_pr_feedback_attempts`; PR feedback rounds do not consume the `max_attempts` execution budget.
 - Unexpected exceptions raised after the run record exists land the run in BLOCKED with the traceback in the blocker artifact.
-- Merge conflicts or unknown mergeability are surfaced as PR feedback or blocker conditions; merge automation is not implemented.
+- Merge conflicts get a focused fetch-first conflict prompt separated from other feedback; unknown mergeability surfaces as PR feedback or blocker conditions. Merge automation is not implemented; post-merge learning is `bd-1 sync` polling.
 
 ## Runtime Ignore Pattern
 
