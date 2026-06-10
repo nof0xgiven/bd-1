@@ -104,9 +104,12 @@ def compile_conflict_resolution_prompt(*, base_branch: str, pr_feedback_text: st
         [
             "# Merge Conflict Resolution Contract",
             f"This branch has merge conflicts with `{base_branch}`.",
-            f"Merge `origin/{base_branch}` into the current branch and resolve the "
-            "conflicts. Only resolve the conflicts: do not refactor, do not add "
-            "features, do not change unrelated files.",
+            f"Run `git fetch origin {base_branch}` first so the base ref is current, "
+            f"then merge `origin/{base_branch}` into the current branch and resolve "
+            "the conflicts.",
+            "Resolve the merge conflict first, then address the actionable items in "
+            "the PR feedback document below. Do not refactor or add features beyond "
+            "what the conflict resolution and the listed feedback require.",
             "Preserve the intent of both sides; when in doubt, prefer the base "
             "branch's behavior for code you did not write in this task.",
             "Run the test suite after resolving and fix anything the merge broke.",
@@ -562,14 +565,15 @@ class Orchestrator:
             self.run_store.write(worktree, record)
 
             record = self._transition(worktree, record, RunState.PR_PUBLISHING, "publishing PR")
+            pr_base_branch = (
+                config.pr_base_branch or config.default_branch or git_default_branch(repo)
+            )
             try:
                 publication = pr_runner.publish_or_update(
                     worktree=worktree,
                     task=task,
                     branch=branch,
-                    base_branch=config.pr_base_branch
-                    or config.default_branch
-                    or git_default_branch(repo),
+                    base_branch=pr_base_branch,
                     run_id=run_id,
                     base_commit=base_commit,
                     completed_path=completed_path,
@@ -677,9 +681,7 @@ class Orchestrator:
                 )
                 if pr_result.merge_conflict:
                     revision_prompt = compile_conflict_resolution_prompt(
-                        base_branch=config.pr_base_branch
-                        or config.default_branch
-                        or git_default_branch(repo),
+                        base_branch=pr_base_branch,
                         pr_feedback_text=pr_feedback_text,
                     )
                 else:

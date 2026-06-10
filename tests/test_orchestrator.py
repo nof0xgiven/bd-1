@@ -844,10 +844,71 @@ def test_merge_conflict_feedback_uses_focused_resolution_prompt(tmp_path, init_g
 
     assert record.state is RunState.COMPLETE
     conflict_prompt = pi.prompts[1]
+    base = make_config(repo).default_branch
     assert "merge conflict resolution contract" in conflict_prompt.lower()
-    assert "only resolve the conflicts" in conflict_prompt.lower()
-    assert make_config(repo).default_branch in conflict_prompt
+    assert "resolve the merge conflict first" in conflict_prompt.lower()
+    assert f"git fetch origin {base}" in conflict_prompt
+    assert f"origin/{base}" in conflict_prompt
     assert "Resolve PR feedback" in conflict_prompt
+
+
+def test_merge_conflict_with_co_arriving_feedback_keeps_feedback_actionable(
+    tmp_path, init_git_repo
+):
+    repo = init_git_repo(tmp_path / "repo")
+    mixed_result = PrResult(
+        number=4,
+        url="https://github.com/acme/demo/pull/4",
+        state="OPEN",
+        checks=[PrCheck("tests", "pass", "SUCCESS", "", "")],
+        feedback=[
+            PrFeedbackItem(
+                key="mergeable:CONFLICTING",
+                source="mergeability",
+                author="github",
+                body="This branch has conflicts that must be resolved.",
+                path="",
+                url="",
+                required_action="Resolve merge conflicts.",
+            ),
+            PrFeedbackItem(
+                key="review-comment:101",
+                source="review_comment",
+                author="reviewer",
+                body="Please rename frobnicate to frobnicate_all.",
+                path="src/app.py",
+                url="",
+                required_action="Rename the helper.",
+            ),
+        ],
+        merge_conflict=True,
+        artifact_path=".artifacts/pr/fix-bug-1.md",
+    )
+    complete_result = PrResult(
+        number=4,
+        url="https://github.com/acme/demo/pull/4",
+        state="OPEN",
+        checks=[PrCheck("tests", "pass", "SUCCESS", "", "")],
+        feedback=[],
+        merge_conflict=False,
+        complete_artifact_path=".artifacts/pr/fix-bug-2-complete.md",
+    )
+    pi = FakePiRunner()
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS", "PASS"]),
+        pi_runner=pi,
+        vet_runner=FakeVetRunner([0, 0]),
+        pr_runner=FakePrRunner([mixed_result, complete_result]),
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    conflict_prompt = pi.prompts[1]
+    assert "merge conflict resolution contract" in conflict_prompt.lower()
+    assert "then address the actionable items" in conflict_prompt.lower()
+    assert "Please rename frobnicate to frobnicate_all." in conflict_prompt
 
 
 def test_pr_feedback_max_attempts_blocks(tmp_path, init_git_repo):

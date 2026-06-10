@@ -292,8 +292,10 @@ class FakePrRunner:
         if result.artifact_path:
             path = worktree / result.artifact_path
             path.parent.mkdir(parents=True, exist_ok=True)
+            feedback_lines = "".join(f"- {item.body}\n" for item in result.feedback)
             path.write_text(
-                "# PR Feedback\n\n## Consolidated Resolve Prompt\n\nResolve PR feedback.\n",
+                "# PR Feedback\n\n## Consolidated Resolve Prompt\n\n"
+                "Resolve PR feedback.\n\n" + feedback_lines,
                 encoding="utf-8",
             )
             artifact_path = str(path)
