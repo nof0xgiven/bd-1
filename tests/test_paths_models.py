@@ -40,6 +40,35 @@ def test_make_run_id_appends_random_suffix_by_default():
     assert re.fullmatch(r"run-20260609T123456Z-fix-api-drift-[0-9a-f]{4}", run_id)
 
 
+def test_slugify_trims_long_values_at_hyphen_boundary():
+    assert (
+        slugify("harden meeting url validation extra words", max_length=32)
+        == "harden-meeting-url-validation"
+    )
+    # Cut landing exactly on a word boundary keeps the full word.
+    assert (
+        slugify("harden meeting url validation in meeting bridge", max_length=32)
+        == "harden-meeting-url-validation-in"
+    )
+    # No hyphen to trim at: hard cut, no trailing hyphen.
+    assert slugify("a" * 40, max_length=32) == "a" * 32
+
+
+def test_make_run_id_bounds_total_length_for_long_tasks():
+    task = (
+        "harden meeting url validation in meeting bridge assert meeting url "
+        "rejects unsupported schemes and hosts before joining the call"
+    )
+    run_id = make_run_id(task, now="2026-06-10T10:59:39Z", suffix="532e")
+
+    # run-(4) + timestamp(16) + -(1) + slug(<=32) + -(1) + hex(4) = 58 max.
+    assert len(run_id) <= 58
+    match = re.fullmatch(r"run-(20260610T105939Z)-([a-z0-9][a-z0-9-]*[a-z0-9])-(532e)", run_id)
+    assert match
+    assert len(match.group(2)) <= 32
+    assert not match.group(2).endswith("-")
+
+
 def test_workspace_config_round_trips():
     config = WorkspaceConfig(
         name="demo",
