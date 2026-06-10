@@ -639,3 +639,50 @@ def test_sync_cli_learns_from_merged_pr(tmp_path, monkeypatch, capsys):
     assert output["learned"] == ["run-1"]
     assert output["skipped"] == {}
     assert run_store.read_by_id("run-1").merge_synced_at != ""
+
+
+def test_sync_cli_sweeps_past_deregistered_workspace(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    WorkspaceRegistry(state).add(default_workspace_config("demo", str(repo), "Demo", "", "main"))
+    run_store = RunStore(state)
+
+    def make_record(run_id: str, workspace: str) -> RunRecord:
+        return RunRecord(
+            run_id=run_id,
+            workspace=workspace,
+            task="Fix bug",
+            base_commit="base",
+            branch=f"bd-1/{run_id}",
+            worktree=str(tmp_path / f"gone-{run_id}"),
+            state=RunState.COMPLETE,
+            created_at="2026-06-10T00:00:00Z",
+            updated_at="2026-06-10T00:00:00Z",
+            final_verdict="PASS",
+            pr_number=7,
+        )
+
+    for run_id, workspace in (("run-1", "demo"), ("run-2", "ghost")):
+        record = make_record(run_id, workspace)
+        run_store.write_archived(record)
+        archive = run_store.archive_dir(run_id)
+        (archive / "final-diff.patch").write_text("diff text", encoding="utf-8")
+        (archive / "review.md").write_text("review text", encoding="utf-8")
+
+    def fake_run_command(command, cwd, env=None, timeout=None):
+        payload = json.dumps({"state": "MERGED", "mergedAt": "2026-06-10T10:00:00Z"})
+        return SimpleNamespace(exit_code=0, stdout=payload, stderr="")
+
+    monkeypatch.setattr("bd1.subprocesses.run_command", fake_run_command)
+
+    assert main(["sync"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["checked"] == 1
+    assert output["learned"] == ["run-1"]
+    assert "workspace:ghost" in output["skipped"]
+    assert "not registered" in output["skipped"]["workspace:ghost"]
+    assert run_store.read_by_id("run-1").merge_synced_at != ""

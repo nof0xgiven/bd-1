@@ -374,19 +374,25 @@ def _handle_sync(args: argparse.Namespace, registry: WorkspaceRegistry, state_di
     learned: list[str] = []
     skipped: dict[str, str] = {}
     for name in selected:
-        config = registry.get(name)
-        workspace_records = by_workspace.get(name, [])
-        if not any(eligible(record) for record in workspace_records):
+        try:
+            config = registry.get(name)
+            workspace_records = by_workspace.get(name, [])
+            if not any(eligible(record) for record in workspace_records):
+                continue
+            reasoning = _build_reasoning(config)
+            outcome = sync_runs(
+                run_store=run_store,
+                records=workspace_records,
+                config=config,
+                reasoning=reasoning,
+                runner=run_command,
+                global_root=state_dir,
+            )
+        except Bd1Error as exc:
+            # Stale run pointers (e.g. a deregistered workspace) must not
+            # abort the sweep; record them alongside sync's per-record skips.
+            skipped[f"workspace:{name}"] = str(exc)
             continue
-        reasoning = _build_reasoning(config)
-        outcome = sync_runs(
-            run_store=run_store,
-            records=workspace_records,
-            config=config,
-            reasoning=reasoning,
-            runner=run_command,
-            global_root=state_dir,
-        )
         checked += outcome.checked
         learned.extend(outcome.learned)
         skipped.update(outcome.skipped)
