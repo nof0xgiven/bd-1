@@ -478,11 +478,16 @@ class Orchestrator:
             record = self._append_attempt(worktree, record, attempt)
             record = self._transition(worktree, record, RunState.VET_PASSED, "vet passed")
             record = self._transition(worktree, record, RunState.REVIEW_RUNNING, "review running")
+            executor_summary = (
+                completed_path.read_text(encoding="utf-8") if completed_path.exists() else ""
+            )
             review = self.reasoning.review(
                 task=task,
                 discovery_context=discovery.markdown,
                 implementation_plan=plan.markdown,
-                pi_completion_summary=pi_result.stdout_path.read_text(encoding="utf-8"),
+                pi_completion_summary=executor_summary
+                if executor_summary.strip()
+                else pi_result.stdout_path.read_text(encoding="utf-8"),
                 command_output_summary=vet_result.stdout_path.read_text(encoding="utf-8"),
                 git_diff=diff_path.read_text(encoding="utf-8"),
                 vet_json=vet_result.output_path.read_text(encoding="utf-8"),
@@ -518,11 +523,19 @@ class Orchestrator:
                 )
                 continue
 
-            write_text(
-                completed_path,
-                f"# Completed: {task}\n\nCommit: {commit_sha}\nReview: {review_path}\n",
-                redact=True,
-            )
+            if executor_summary.strip():
+                # Preserve the executor's proof of work; append the run footer.
+                write_text(
+                    completed_path,
+                    f"{executor_summary.rstrip()}\n\nCommit: {commit_sha}\nReview: {review_path}\n",
+                    redact=True,
+                )
+            else:
+                write_text(
+                    completed_path,
+                    f"# Completed: {task}\n\nCommit: {commit_sha}\nReview: {review_path}\n",
+                    redact=True,
+                )
             record = self._transition(worktree, record, RunState.REVIEW_PASSED, "review passed")
             record = replace(
                 record,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -98,6 +99,7 @@ class FakePiBehavior:
     exit_code: int = 0
     stderr: str = ""
     error: str = ""
+    completion_summary: str = ""
 
 
 class FakePiRunner:
@@ -148,6 +150,15 @@ class FakePiRunner:
                 + "\n",
                 encoding="utf-8",
             )
+
+        if behavior.completion_summary:
+            # Mirror a real executor: write the summary to the path the
+            # orchestrator named in the execution prompt.
+            match = re.search(r"Write the completion summary to (\S+) with sections:", prompt)
+            if match:
+                completed_path = Path(match.group(1))
+                completed_path.parent.mkdir(parents=True, exist_ok=True)
+                completed_path.write_text(behavior.completion_summary, encoding="utf-8")
 
         if behavior.make_changes:
             changed = worktree_path / "change.txt"

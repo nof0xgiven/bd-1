@@ -103,11 +103,60 @@ def test_execution_prompt_encodes_tdd_and_proof_doctrine():
         completion_summary_path="/wt/.artifacts/completed/add-feature.md",
     )
     lower = prompt.lower()
-    assert "red" in lower and "green" in lower
+    assert "red -> green -> refactor" in lower
     assert "mock" in lower
     assert "proof" in lower
     assert "do not invent" in lower
     assert "changes made" in lower and "quality validation" in lower
+
+
+def test_executor_completion_summary_reaches_review_and_keeps_proof_in_file(
+    tmp_path, init_git_repo
+):
+    repo = init_git_repo(tmp_path / "repo")
+    summary = (
+        "# Completed: Fix bug\n\n"
+        "## Changes Made\n- change.txt: added feature\n\n"
+        "## Quality Validation\n- pytest: pass\n\n"
+        "## Proof of Work\n2 passed in 0.1s\n"
+    )
+    reasoning = FakeReasoning(["PASS"])
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=reasoning,
+        pi_runner=FakePiRunner([FakePiBehavior(completion_summary=summary)]),
+        vet_runner=FakeVetRunner([0]),
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    assert reasoning.review_inputs[-1]["pi_completion_summary"] == summary
+    completed = Path(record.artifacts["completed"]).read_text(encoding="utf-8")
+    assert completed.startswith("# Completed: Fix bug")
+    assert "## Proof of Work" in completed
+    assert "2 passed in 0.1s" in completed
+    assert f"Commit: {record.attempts[-1].commit_sha}" in completed
+    assert f"Review: {record.attempts[-1].review_path}" in completed
+
+
+def test_missing_completion_summary_falls_back_to_stdout_and_stub(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    reasoning = FakeReasoning(["PASS"])
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=reasoning,
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0]),
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    assert reasoning.review_inputs[-1]["pi_completion_summary"] == "pi call 0\n"
+    completed = Path(record.artifacts["completed"]).read_text(encoding="utf-8")
+    assert completed.startswith("# Completed: Fix bug")
+    assert f"Commit: {record.attempts[-1].commit_sha}" in completed
 
 
 def test_happy_path_persists_transitions_and_is_indexable(tmp_path, init_git_repo):
