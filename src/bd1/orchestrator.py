@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shlex
 import shutil
 import traceback
@@ -104,10 +105,10 @@ def compile_execution_prompt(
             "Leave the worktree clean before exit.",
             "## Completion summary (proof of work)",
             f"Write the completion summary to {completion_summary_path} with sections: "
-            "'Changes Made' (grouped by file), 'Quality Validation' (each check run "
-            "and its result), 'Proof of Work' (concrete evidence the change works: "
-            "test output, command output, before/after behavior), and "
-            "'Notes and Assumptions'.",
+            "'## Changes Made' (grouped by file), '## Quality Validation' (each "
+            "check run and its result), '## Proof of Work' (concrete evidence the "
+            "change works: test output, command output, before/after behavior), "
+            "and '## Notes and Assumptions'.",
         ]
     )
 
@@ -135,6 +136,7 @@ def compile_conflict_resolution_prompt(*, base_branch: str, pr_feedback_text: st
 
 def compile_revision_prompt(
     *,
+    task: str,
     feedback_kind: str,
     feedback_text: str,
     completion_summary_path: str,
@@ -143,8 +145,10 @@ def compile_revision_prompt(
     return "\n\n".join(
         [
             "# Revision Contract",
+            f"Task: {task}",
             f"You are resolving reported {feedback_kind}. Read the feedback below "
             "in full before changing anything.",
+            "Work only in the task worktree, never on the main branch.",
             "For each issue: when the fix changes behavior, write the smallest "
             "failing real test first, then fix, then re-run until green. "
             "Mechanical-only fixes (formatting, docs, renames) may skip the red step.",
@@ -160,12 +164,28 @@ def compile_revision_prompt(
             "Commit changes before exit. Resolve pre-commit failures without "
             "workarounds or hacks. Leave the worktree clean before exit.",
             f"Update the completion summary at {completion_summary_path}: append "
-            "a '## Revision <n>' section describing what was fixed and the proof "
-            "it works. Keep the existing summary content intact.",
+            "a '## Revision <n>' section, where <n> is one more than the number "
+            "of existing '## Revision' sections, describing what was fixed and "
+            "the proof it works. Keep the existing summary content intact.",
             "## Reported feedback",
             feedback_text,
         ]
     )
+
+
+# Footer the orchestrator appends to the completion summary after a review
+# pass. Revision rounds append '## Revision <n>' sections after the file's
+# existing content, so an earlier round's footer ends up mid-document; strip
+# every footer the orchestrator itself wrote before appending a fresh one.
+# The pattern is deliberately exact — a 'Commit: <sha>' line immediately
+# followed by a 'Review: ' line — so executor-authored content is never
+# touched.
+_RUN_FOOTER_RE = re.compile(r"^Commit: [0-9a-f]{7,40}\nReview: [^\n]*\n?", re.MULTILINE)
+
+
+def strip_run_footers(text: str) -> str:
+    """Remove Commit:/Review: footers previously appended by the orchestrator."""
+    return _RUN_FOOTER_RE.sub("", text)
 
 
 # openai-codex rejects prompt_cache_key values longer than 64 chars, and pi
@@ -548,6 +568,7 @@ class Orchestrator:
                     pr_feedback=pr_feedback_text,
                 )
                 revision_prompt = compile_revision_prompt(
+                    task=task,
                     feedback_kind="vet findings",
                     feedback_text=vet_result.findings_summary,
                     completion_summary_path=str(completed_path),
@@ -572,7 +593,9 @@ class Orchestrator:
             record = self._transition(worktree, record, RunState.VET_PASSED, "vet passed")
             record = self._transition(worktree, record, RunState.REVIEW_RUNNING, "review running")
             executor_summary = (
-                completed_path.read_text(encoding="utf-8") if completed_path.exists() else ""
+                strip_run_footers(completed_path.read_text(encoding="utf-8"))
+                if completed_path.exists()
+                else ""
             )
             review = self.reasoning.review(
                 task=task,
@@ -611,6 +634,7 @@ class Orchestrator:
                     pr_feedback=pr_feedback_text,
                 )
                 revision_prompt = compile_revision_prompt(
+                    task=task,
                     feedback_kind="review feedback",
                     feedback_text=review.markdown,
                     completion_summary_path=str(completed_path),
@@ -761,6 +785,7 @@ class Orchestrator:
                     )
                 else:
                     revision_prompt = compile_revision_prompt(
+                        task=task,
                         feedback_kind="PR feedback",
                         feedback_text=pr_feedback_text,
                         completion_summary_path=str(completed_path),

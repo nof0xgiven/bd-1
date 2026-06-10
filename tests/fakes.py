@@ -178,6 +178,15 @@ class FakePiRunner:
                 completed_path = Path(match.group(1))
                 completed_path.parent.mkdir(parents=True, exist_ok=True)
                 completed_path.write_text(behavior.completion_summary, encoding="utf-8")
+            else:
+                # Mirror a real revision agent: append the '## Revision <n>'
+                # note to the existing summary named in the revision contract.
+                match = re.search(r"Update the completion summary at (\S+): append", prompt)
+                if match:
+                    completed_path = Path(match.group(1))
+                    completed_path.parent.mkdir(parents=True, exist_ok=True)
+                    with completed_path.open("a", encoding="utf-8") as handle:
+                        handle.write(behavior.completion_summary)
 
         if behavior.make_changes:
             changed = worktree_path / "change.txt"

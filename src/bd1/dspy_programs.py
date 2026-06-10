@@ -19,9 +19,11 @@ class DiscoverTaskContext(dspy.Signature):
     You are a discovery agent. Your output is the coding agent's entire world:
     it must enable a correct implementation on the first attempt. Do not assume —
     if you cannot prove a claim from the repository evidence, label it explicitly
-    as an ambiguity under 'Potential Gotchas'. Find a source of truth for the change:
-    either an existing reference implementation in this repository or a proven
-    external example, and cite it. Prefer minimal-but-sufficient inclusion:
+    as an ambiguity under 'Potential Gotchas'. Find a source of truth for the
+    change: an existing reference implementation in this repository, or an
+    example from the external_examples input if one is provided. If neither
+    exists, record under 'Potential Gotchas' that no source of truth was found —
+    never invent a citation. Prefer minimal-but-sufficient inclusion:
     everything the coding agent needs, nothing irrelevant. For every file excerpt
     include the file path; for files to read, explain why each matters. Surface
     concrete gotchas tied to this repository, constraints discovered from the
@@ -48,8 +50,10 @@ class DiscoverTaskContext(dspy.Signature):
             "Complete markdown context package with EXACTLY these sections: "
             "'# Context Package: <short task title>', "
             "'## Task Understanding' (2-3 sentences, type, scope, complexity), "
-            "'## Source of Truth' (the proven reference implementation in this "
-            "repo or a cited external example), "
+            "'## Source of Truth' (an existing reference implementation in this "
+            "repo, or an example from the external_examples input if one is "
+            "provided; if neither exists, say so here and under '## Potential "
+            "Gotchas' — never invent a citation), "
             "'## Architecture Overview' (relevant modules and data flow), "
             "'## Files to Read' (table: file, lines, why), "
             "'## Files to Create or Modify' (table: action, file, description), "
@@ -95,6 +99,7 @@ class CreateImplementationPlan(dspy.Signature):
             "Complete markdown implementation plan with EXACTLY these sections: "
             "'# Implementation Plan: <title>', "
             "'## Summary', "
+            "'## Acceptance Criteria' (verifiable conditions that define done), "
             "'## Current-State Analysis', "
             "'## Design', "
             "'## File-by-File Impact' (table: file, change, why, ordering "

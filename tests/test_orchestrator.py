@@ -113,7 +113,15 @@ def test_execution_prompt_encodes_tdd_and_proof_doctrine():
     assert "mock" in lower
     assert "proof" in lower
     assert "do not invent" in lower
-    assert "changes made" in lower and "quality validation" in lower
+    # Section names are '## ' headings so revision appends stay structurally
+    # consistent with the executor's summary.
+    for heading in (
+        "'## Changes Made'",
+        "'## Quality Validation'",
+        "'## Proof of Work'",
+        "'## Notes and Assumptions'",
+    ):
+        assert heading in prompt
 
 
 OPTIMIZATION_ORDER_LINE = (
@@ -128,12 +136,15 @@ BORING_SOLUTIONS_LINE = (
 @pytest.mark.parametrize("feedback_kind", ["vet findings", "review feedback", "PR feedback"])
 def test_revision_prompt_contains_revision_contract_clauses(feedback_kind):
     prompt = compile_revision_prompt(
+        task="Fix bug",
         feedback_kind=feedback_kind,
         feedback_text="The frobnicate helper drops errors silently.",
         completion_summary_path="/wt/.artifacts/completed/fix.md",
     )
 
     assert prompt.startswith("# Revision Contract")
+    assert "Task: Fix bug" in prompt
+    assert "Work only in the task worktree, never on the main branch." in prompt
     assert feedback_kind in prompt
     assert "The frobnicate helper drops errors silently." in prompt
     assert "/wt/.artifacts/completed/fix.md" in prompt
@@ -143,10 +154,12 @@ def test_revision_prompt_contains_revision_contract_clauses(feedback_kind):
     assert BORING_SOLUTIONS_LINE in prompt
     assert "Do not invent" in prompt
     assert "## Revision" in prompt
+    assert "one more than the number of existing '## Revision' sections" in prompt
 
 
 def test_revision_prompt_scope_guardrail_matches_conflict_contract_phrasing():
     prompt = compile_revision_prompt(
+        task="Fix bug",
         feedback_kind="review feedback",
         feedback_text="finding",
         completion_summary_path="/wt/.artifacts/completed/fix.md",
@@ -166,6 +179,7 @@ def test_optimization_doctrine_is_shared_between_executor_and_revision_contracts
         completion_summary_path=".artifacts/completed/fix.md",
     )
     revision_prompt = compile_revision_prompt(
+        task="Fix bug",
         feedback_kind="vet findings",
         feedback_text="finding",
         completion_summary_path=".artifacts/completed/fix.md",
@@ -912,6 +926,73 @@ def test_pr_feedback_loops_back_to_pi_prompt_and_then_completes(tmp_path, init_g
     assert "# Revision Contract" in pr_retry_prompt
     assert "PR feedback" in pr_retry_prompt
     assert "Resolve PR feedback" in pr_retry_prompt
+
+
+def test_pr_feedback_rounds_keep_single_trailing_footer_and_revision_sections(
+    tmp_path, init_git_repo
+):
+    repo = init_git_repo(tmp_path / "repo")
+    feedback_result = PrResult(
+        number=2,
+        url="https://github.com/acme/demo/pull/2",
+        state="OPEN",
+        checks=[PrCheck("tests", "fail", "FAILURE", "", "failed")],
+        feedback=[
+            PrFeedbackItem(
+                key="ci:tests",
+                source="ci",
+                author="github",
+                body="failed",
+                path="tests",
+                url="",
+                required_action="Fix tests.",
+            )
+        ],
+        merge_conflict=False,
+        artifact_path=".artifacts/pr/fix-bug-1.md",
+    )
+    complete_result = PrResult(
+        number=2,
+        url="https://github.com/acme/demo/pull/2",
+        state="OPEN",
+        checks=[PrCheck("tests", "pass", "SUCCESS", "", "")],
+        feedback=[],
+        merge_conflict=False,
+        complete_artifact_path=".artifacts/pr/fix-bug-2-complete.md",
+    )
+    pi = FakePiRunner(
+        [
+            FakePiBehavior(
+                completion_summary=(
+                    "# Completed: Fix bug\n\n"
+                    "## Changes Made\n- change.txt: added feature\n\n"
+                    "## Proof of Work\n- pytest passed\n"
+                )
+            ),
+            FakePiBehavior(
+                completion_summary="\n## Revision 1\n\nFixed the failing tests; suite green.\n"
+            ),
+        ]
+    )
+    orchestrator = make_orchestrator(
+        tmp_path,
+        reasoning=FakeReasoning(["PASS", "PASS"]),
+        pi_runner=pi,
+        vet_runner=FakeVetRunner([0, 0]),
+        pr_runner=FakePrRunner([feedback_result, complete_result]),
+    )
+
+    record = orchestrator.run(make_config(repo), "Fix bug")
+
+    assert record.state is RunState.COMPLETE
+    summary = Path(record.artifacts["completed"]).read_text(encoding="utf-8")
+    # Executor proof and the appended revision section both survive.
+    assert "## Changes Made" in summary
+    assert "## Revision 1" in summary
+    # Exactly one Commit:/Review: footer, and it is the trailing block.
+    assert summary.count("Commit: ") == 1
+    assert summary.count("Review: ") == 1
+    assert re.search(r"\n\nCommit: [0-9a-f]{7,40}\nReview: [^\n]+\n$", summary)
 
 
 def test_merge_conflict_feedback_uses_focused_resolution_prompt(tmp_path, init_git_repo):

@@ -80,11 +80,23 @@ def test_discovery_context_package_field_carries_output_template():
     assert "ambiguities" in desc
 
 
+def test_source_of_truth_is_scoped_to_provable_evidence():
+    # Discovery has only repo tools plus the external_examples input: a
+    # missing source of truth must be recorded, never invented as a citation.
+    # Docstring and field desc state the same rule.
+    doc = DiscoverTaskContext.__doc__
+    desc = DiscoverTaskContext.output_fields["context_package_markdown"].json_schema_extra["desc"]
+    for text in (doc, desc):
+        assert "external_examples" in text
+        assert "never invent a citation" in text
+
+
 def test_plan_markdown_field_carries_output_template():
     desc = CreateImplementationPlan.output_fields["plan_markdown"].json_schema_extra["desc"]
     for heading in [
         "# Implementation Plan:",
         "## Summary",
+        "## Acceptance Criteria",
         "## Current-State Analysis",
         "## Design",
         "## File-by-File Impact",
