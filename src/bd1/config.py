@@ -61,5 +61,8 @@ def load_workspace_config(repo: str | Path) -> WorkspaceConfig:
     if not path.exists():
         raise WorkspaceConfigError(f"Workspace config not found: {path}")
     with path.open("rb") as handle:
-        data = tomllib.load(handle)
+        try:
+            data = tomllib.load(handle)
+        except tomllib.TOMLDecodeError as exc:
+            raise WorkspaceConfigError(f"Invalid TOML in {path}: {exc}") from exc
     return WorkspaceConfig.from_dict(data)

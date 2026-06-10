@@ -72,6 +72,22 @@ def test_registry_get_rejects_live_config_with_mismatched_name(tmp_path):
     assert "other" in str(exc.value)
 
 
+def test_registry_get_wraps_malformed_live_toml_as_workspace_config_error(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_workspace_config(name="demo", repo_path=str(repo), product_description="demo")
+    write_workspace_config(repo, config)
+    registry = WorkspaceRegistry(tmp_path / "state")
+    registry.add(config)
+
+    (repo / ".bd-1.toml").write_text("not = [valid\n", encoding="utf-8")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        registry.get("demo")
+
+    assert str(repo / ".bd-1.toml") in str(exc.value)
+
+
 def test_load_workspace_config_supports_existing_files_without_pr_fields(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
