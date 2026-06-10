@@ -417,4 +417,7 @@ def _build_reasoning(config: WorkspaceConfig):
     import dspy
 
     dspy.configure(lm=dspy.LM(config.dspy_model, num_retries=config.dspy_num_retries))
-    return DspyReasoningPrograms(discovery_max_iters=config.discovery_max_iters)
+    return DspyReasoningPrograms(
+        discovery_max_iters=config.discovery_max_iters,
+        discovery_mcp_servers=config.discovery_mcp_servers,
+    )

@@ -42,6 +42,7 @@ def default_workspace_config(
         pr_comment_ignore_authors=[],
         dspy_num_retries=3,
         discovery_max_iters=12,
+        discovery_mcp_servers=[],
     )
 
 

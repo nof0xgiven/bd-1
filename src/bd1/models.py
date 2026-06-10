@@ -97,6 +97,7 @@ class WorkspaceConfig:
     pr_comment_ignore_authors: list[str] = field(default_factory=list)
     dspy_num_retries: int = 3
     discovery_max_iters: int = 12
+    discovery_mcp_servers: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

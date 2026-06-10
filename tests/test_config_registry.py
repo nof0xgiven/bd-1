@@ -123,6 +123,23 @@ def test_load_workspace_config_supports_existing_files_without_pr_fields(tmp_pat
     assert config.pr_base_branch == ""
     assert config.pr_draft is False
     assert config.pr_comment_ignore_authors == []
+    assert config.discovery_mcp_servers == []
+
+
+def test_workspace_config_round_trips_discovery_mcp_servers(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    servers = ["npx -y exa-mcp-server", "npx -y @upstash/context7-mcp"]
+    config = replace(
+        default_workspace_config("demo", str(repo), "Demo"),
+        discovery_mcp_servers=servers,
+    )
+
+    write_workspace_config(repo, config)
+    loaded = load_workspace_config(repo)
+
+    assert loaded.discovery_mcp_servers == servers
+    assert default_workspace_config("demo", str(repo), "Demo").discovery_mcp_servers == []
 
 
 def test_load_workspace_config_names_unknown_keys(tmp_path):
