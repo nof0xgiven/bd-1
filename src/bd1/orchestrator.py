@@ -99,6 +99,24 @@ def compile_execution_prompt(
     )
 
 
+def compile_conflict_resolution_prompt(*, base_branch: str, pr_feedback_text: str) -> str:
+    return "\n\n".join(
+        [
+            "# Merge Conflict Resolution Contract",
+            f"This branch has merge conflicts with `{base_branch}`.",
+            f"Merge `origin/{base_branch}` into the current branch and resolve the "
+            "conflicts. Only resolve the conflicts: do not refactor, do not add "
+            "features, do not change unrelated files.",
+            "Preserve the intent of both sides; when in doubt, prefer the base "
+            "branch's behavior for code you did not write in this task.",
+            "Run the test suite after resolving and fix anything the merge broke.",
+            "Commit the merge before exit and leave the worktree clean.",
+            "## PR feedback document",
+            pr_feedback_text,
+        ]
+    )
+
+
 class Orchestrator:
     def __init__(
         self,
@@ -657,7 +675,15 @@ class Orchestrator:
                     final_diff=final_diff_text,
                     pr_feedback=pr_feedback_text,
                 )
-                revision_prompt = pr_feedback_text
+                if pr_result.merge_conflict:
+                    revision_prompt = compile_conflict_resolution_prompt(
+                        base_branch=config.pr_base_branch
+                        or config.default_branch
+                        or git_default_branch(repo),
+                        pr_feedback_text=pr_feedback_text,
+                    )
+                else:
+                    revision_prompt = pr_feedback_text
                 next_round_is_pr_feedback = True
                 continue
 
