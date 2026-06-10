@@ -26,7 +26,14 @@ class RepoTools:
         self.root = Path(root).resolve()
 
     def list_tree(self, subdir: str = "") -> str:
-        """List repository files (relative paths), skipping VCS/dependency dirs."""
+        """List repository files as relative paths, skipping VCS/dependency dirs.
+
+        Args:
+            subdir: Directory to list, relative to the repo root ("" = repo root).
+
+        Output is capped at 400 entries; if it ends with a truncation marker,
+        call again with a narrower subdir to see the rest.
+        """
         base = self._resolve(subdir)
         if base is None:
             return f"error: path escapes the repository: {subdir}"
@@ -40,7 +47,10 @@ class RepoTools:
                 if self._is_file(path):
                     entries.append(path.relative_to(self.root).as_posix())
                 if len(entries) >= MAX_TREE_ENTRIES:
-                    entries.append(f"... truncated at {MAX_TREE_ENTRIES} entries")
+                    entries.append(
+                        f"... truncated at {MAX_TREE_ENTRIES} entries; "
+                        "call again with a narrower subdir"
+                    )
                     break
         except OSError as exc:
             # e.g. ENAMETOOLONG from a pathological subdir name.
@@ -48,7 +58,16 @@ class RepoTools:
         return "\n".join(entries) if entries else "no files found"
 
     def read_file(self, relative_path: str, start_line: int = 1) -> str:
-        """Read a file with line numbers, starting at start_line, capped in size."""
+        """Read a repository file with line numbers prepended.
+
+        Args:
+            relative_path: File path relative to the repo root.
+            start_line: 1-based line number to start reading from (default 1).
+
+        Output is capped at ~24KB; truncated output ends with a
+        `continue with start_line=N` marker — call again with that
+        start_line to resume reading where the previous call stopped.
+        """
         path = self._resolve(relative_path)
         if path is None:
             return f"error: path escapes the repository: {relative_path}"
@@ -66,7 +85,7 @@ class RepoTools:
             return f"error: unable to read {relative_path}: {exc}"
         lines = text.splitlines()
         if not lines:
-            return "error: empty file"
+            return "(empty file)"
         if begin > len(lines):
             return f"error: start_line past end of file ({len(lines)} lines)"
         numbered = [f"{index}: {line}" for index, line in enumerate(lines, 1)][begin - 1 :]
@@ -81,14 +100,24 @@ class RepoTools:
         return "\n".join(out)
 
     def search_text(self, pattern: str, glob: str = "") -> str:
-        """Regex search across repository files; returns path:line: text matches."""
+        """Search repository files for a regex pattern, matched per line.
+
+        Args:
+            pattern: Python regular expression, matched against each line.
+            glob: Filename filter ("" = all files; e.g. "*.py" matches
+                Python files recursively).
+
+        Returns matches as `path:line: text`, one per line, capped at 50
+        matches (a truncation marker is appended when the cap is hit).
+        Returns "no matches" when nothing matches.
+        """
         # A bytes pattern compiles fine but raises TypeError when matched
         # against str lines, so reject non-str patterns up front.
         if not isinstance(pattern, str):
             return f"error: invalid regex: pattern must be a string, got {type(pattern).__name__}"
         try:
             compiled = re.compile(pattern)
-        except (re.error, TypeError) as exc:
+        except re.error as exc:
             return f"error: invalid regex: {exc}"
         try:
             paths = sorted(self.root.rglob(glob or "*"))

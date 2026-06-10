@@ -23,6 +23,13 @@ def test_list_tree_skips_git_dir(repo):
     assert ".git" not in listing
 
 
+def test_list_tree_truncation_marker_hints_at_narrower_subdir(repo):
+    for index in range(450):
+        (repo / "src" / f"gen_{index:04d}.py").write_text("pass\n", encoding="utf-8")
+    listing = RepoTools(repo).list_tree()
+    assert "truncated at 400 entries; call again with a narrower subdir" in listing
+
+
 def test_read_file_returns_numbered_lines(repo):
     text = RepoTools(repo).read_file("src/app.py")
     assert "1: def handler():" in text
@@ -53,6 +60,11 @@ def test_read_file_caps_output(repo):
     out = RepoTools(repo).read_file("big.txt")
     assert len(out) < 30_000
     assert "truncated" in out.lower()
+
+
+def test_read_file_reports_empty_file_without_error(repo):
+    (repo / "empty.txt").write_text("", encoding="utf-8")
+    assert RepoTools(repo).read_file("empty.txt") == "(empty file)"
 
 
 def test_read_file_tolerates_bad_start_line(repo):

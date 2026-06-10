@@ -11,6 +11,7 @@ from bd1.dspy_programs import (
     ExtractLearning,
     ReviewOutput,
     TemplateReasoningPrograms,
+    build_discovery_react,
     normalize_review_verdict,
 )
 from bd1.errors import ReasoningOutputError
@@ -294,6 +295,120 @@ def test_learn_tolerates_missing_attributes_with_empty_defaults():
     output = programs.learn(_evidence(), review_markdown="history")
     assert output.learnings == []
     assert output.examples == []
+
+
+class _ExplodingReact:
+    def __call__(self, **kwargs):
+        raise RuntimeError("react exhausted")
+
+
+class _RecordingFallback:
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, **kwargs):
+        self.calls.append(kwargs)
+        return SimpleNamespace(context_package_markdown="# Context Package: fallback")
+
+
+def _react_evidence(tmp_path, **overrides) -> EvidencePackage:
+    fields = dict(
+        task="t",
+        repo_path=str(tmp_path),
+        repo_tree="tree",
+        workspace_artifacts="wa",
+        relevant_learnings="rl",
+        extra_context="",
+    )
+    fields.update(overrides)
+    return EvidencePackage(**fields)
+
+
+def test_discover_uses_react_then_falls_back_to_single_shot(tmp_path):
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback, discovery_react_factory=lambda root, max_iters: _ExplodingReact()
+    )
+
+    output = programs.discover(_react_evidence(tmp_path))
+
+    assert "fallback" in output.markdown
+    assert "single-shot fallback" in output.markdown.lower()
+    assert len(fallback.calls) == 1
+
+
+def test_discover_prefers_react_result(tmp_path):
+    def react(**kwargs):
+        return SimpleNamespace(context_package_markdown="# Context Package: via react")
+
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=lambda root, max_iters: react,
+    )
+
+    output = programs.discover(_react_evidence(tmp_path))
+
+    assert "via react" in output.markdown
+    assert "fallback" not in output.markdown.lower()
+    assert fallback.calls == []
+
+
+def test_discover_passes_artifacts_and_learnings_to_react(tmp_path):
+    seen = {}
+
+    def react(**kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(context_package_markdown="# Context Package: ok")
+
+    programs = DspyReasoningPrograms(
+        discovery=_RecordingFallback(),
+        discovery_react_factory=lambda root, max_iters: react,
+    )
+
+    programs.discover(
+        _react_evidence(
+            tmp_path,
+            workspace_artifacts="THE-ARTIFACTS",
+            relevant_learnings="THE-LEARNINGS",
+        )
+    )
+
+    assert seen["workspace_artifacts"] == "THE-ARTIFACTS"
+    assert seen["relevant_learnings"] == "THE-LEARNINGS"
+
+
+def test_discover_react_factory_receives_repo_path_and_max_iters(tmp_path):
+    seen = {}
+
+    def factory(root, max_iters):
+        seen["root"] = root
+        seen["max_iters"] = max_iters
+
+        def react(**kwargs):
+            return SimpleNamespace(context_package_markdown="# Context Package: ok")
+
+        return react
+
+    programs = DspyReasoningPrograms(
+        discovery=_RecordingFallback(),
+        discovery_react_factory=factory,
+        discovery_max_iters=9,
+    )
+
+    programs.discover(_react_evidence(tmp_path))
+
+    assert seen["root"] == str(tmp_path)
+    assert seen["max_iters"] == 9
+
+
+def test_build_discovery_react_registers_repo_tools_and_max_iters(tmp_path):
+    react = build_discovery_react(str(tmp_path), 7)
+
+    assert react.max_iters == 7
+    assert {"list_tree", "read_file", "search_text"}.issubset(react.tools.keys())
+    for name in ("list_tree", "read_file", "search_text"):
+        assert react.tools[name].desc  # docstrings survive as tool descriptions
 
 
 def test_learning_interface_accepts_diff_and_feedback_without_live_model_calls():

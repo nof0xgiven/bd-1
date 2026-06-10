@@ -9,6 +9,7 @@ import dspy
 
 from bd1.errors import ReasoningOutputError
 from bd1.evidence import EvidencePackage
+from bd1.repo_tools import RepoTools
 
 
 class DiscoverTaskContext(dspy.Signature):
@@ -362,6 +363,16 @@ class LearningProgram(dspy.Module):
         )
 
 
+def build_discovery_react(repo_root: str, max_iters: int):
+    """Default factory: a dspy.ReAct over DiscoverTaskContext with repo tools."""
+    tools = RepoTools(repo_root)
+    return dspy.ReAct(
+        DiscoverTaskContext,
+        tools=[tools.list_tree, tools.read_file, tools.search_text],
+        max_iters=max_iters,
+    )
+
+
 class DspyReasoningPrograms:
     def __init__(
         self,
@@ -371,23 +382,37 @@ class DspyReasoningPrograms:
         reviewer: Any | None = None,
         learning_extractor: Any | None = None,
         discovery_max_iters: int = 12,
+        discovery_react_factory: Any | None = None,
     ) -> None:
         self._discovery_max_iters = discovery_max_iters
         self._discovery = discovery or DiscoveryProgram()
         self._planner = planner or PlanningProgram()
         self._reviewer = reviewer or ReviewProgram()
         self._learning_extractor = learning_extractor or LearningProgram()
+        self._discovery_react_factory = discovery_react_factory or build_discovery_react
 
     def discover(self, evidence: EvidencePackage) -> DiscoveryOutput:
-        prediction = self._discovery(
+        inputs = dict(
             task=evidence.task,
             workspace_artifacts=evidence.workspace_artifacts,
             repo_evidence=evidence.repo_tree,
             relevant_learnings=evidence.relevant_learnings,
             external_examples=evidence.extra_context,
         )
-        markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
-        return DiscoveryOutput(markdown=markdown)
+        try:
+            react = self._discovery_react_factory(evidence.repo_path, self._discovery_max_iters)
+            prediction = react(**inputs)
+            markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
+            return DiscoveryOutput(markdown=markdown)
+        except Exception:
+            # ReAct failures (iteration exhaustion, tool/adapter errors) must
+            # degrade to single-shot discovery, never block the run on their
+            # own. A failure of the fallback itself still raises
+            # ReasoningOutputError via _required_markdown.
+            prediction = self._discovery(**inputs)
+            markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
+            note = "\n\n> Note: tool-using discovery failed; single-shot fallback was used.\n"
+            return DiscoveryOutput(markdown=markdown + note)
 
     def plan(self, evidence: EvidencePackage, *, discovery_context: str) -> PlanOutput:
         prediction = self._planner(
