@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from bd1.config import default_workspace_config, load_workspace_config, write_workspace_config
@@ -29,6 +31,45 @@ def test_registry_round_trips_workspace(tmp_path):
 
     assert registry.get("demo") == config
     assert registry.list_workspaces() == [config]
+
+
+def test_registry_get_prefers_live_workspace_config(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_workspace_config(name="demo", repo_path=str(repo), product_description="demo")
+    write_workspace_config(repo, config)
+    registry = WorkspaceRegistry(tmp_path / "state")
+    registry.add(config)
+
+    edited = replace(config, max_attempts=9)
+    write_workspace_config(repo, edited)
+
+    assert registry.get("demo").max_attempts == 9
+
+
+def test_registry_get_falls_back_to_snapshot_when_repo_config_missing(tmp_path):
+    config = default_workspace_config(
+        name="gone", repo_path=str(tmp_path / "missing"), product_description="demo"
+    )
+    registry = WorkspaceRegistry(tmp_path / "state")
+    registry.add(config)
+    assert registry.get("gone").max_attempts == config.max_attempts
+
+
+def test_registry_get_rejects_live_config_with_mismatched_name(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_workspace_config(name="demo", repo_path=str(repo), product_description="demo")
+    write_workspace_config(repo, config)
+    registry = WorkspaceRegistry(tmp_path / "state")
+    registry.add(config)
+
+    write_workspace_config(repo, replace(config, name="other"))
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        registry.get("demo")
+
+    assert "other" in str(exc.value)
 
 
 def test_load_workspace_config_supports_existing_files_without_pr_fields(tmp_path):

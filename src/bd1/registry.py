@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from bd1.artifacts import write_text
+from bd1.config import load_workspace_config, workspace_config_path
 from bd1.errors import WorkspaceConfigError
 from bd1.models import WorkspaceConfig
 
@@ -24,9 +25,22 @@ class WorkspaceRegistry:
             data = workspaces[name]
         except KeyError as exc:
             raise WorkspaceConfigError(f"Workspace is not registered: {name}") from exc
-        return WorkspaceConfig.from_dict(data)
+        snapshot = WorkspaceConfig.from_dict(data)
+        if workspace_config_path(snapshot.repo_path).exists():
+            live = load_workspace_config(snapshot.repo_path)
+            if live.name != name:
+                raise WorkspaceConfigError(
+                    f"Live workspace config name {live.name!r} does not match "
+                    f"registry key {name!r} in {workspace_config_path(snapshot.repo_path)}"
+                )
+            return live
+        return snapshot
 
     def list_workspaces(self) -> list[WorkspaceConfig]:
+        """Return registry snapshots without consulting live `.bd-1.toml` files.
+
+        Intentionally snapshot-based: this is a listing, not an execution path.
+        """
         workspaces = self._load()
         return [WorkspaceConfig.from_dict(workspaces[name]) for name in sorted(workspaces)]
 
