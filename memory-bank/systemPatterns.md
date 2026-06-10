@@ -81,15 +81,16 @@ Run records live under `.sessions/<run-id>/run-record.json`. Global pointers liv
 
 File: `src/bd1/artifacts.py`
 
-Artifacts are redacted on write unless explicitly disabled. Workspace setup creates `.artifacts/`, `.learning/`, `.examples/`, and `.sessions/` directories.
+Artifacts are redacted on write unless explicitly disabled. Workspace setup creates `.artifacts/` and `.sessions/` directories. Learnings and DSPy examples live in the global store under `<BD1_HOME>/learning/<workspace>/` so they survive worktree cleanup.
 
 ## State Machine
 
-Implemented states are in `src/bd1/models.py`.
+Implemented states and the legal-transition table (`ALLOWED_TRANSITIONS`) are in
+`src/bd1/models.py`; `RunStore.transition` rejects any jump not in the table.
 
 Important happy path:
 
-`TASK_RECEIVED -> BASE_VERIFIED -> WORKTREE_CREATED -> DISCOVERY_COMPLETE -> PLAN_COMPLETE -> EXECUTION_PROMPT_READY -> EXECUTION_RUNNING -> EXECUTION_COMMITTED -> VET_RUNNING -> VET_PASSED -> REVIEW_RUNNING -> REVIEW_PASSED -> PR_PUBLISHING -> PR_CREATED -> PR_MONITORING -> PR_READY -> COMPLETE`
+`TASK_RECEIVED -> BASE_VERIFIED -> WORKTREE_CREATED -> DISCOVERY_COMPLETE -> PLAN_COMPLETE -> EXECUTION_PROMPT_READY -> EXECUTION_RUNNING -> EXECUTION_COMMITTED -> VET_PASSED -> REVIEW_RUNNING -> REVIEW_PASSED -> PR_PUBLISHING -> PR_CREATED -> PR_MONITORING -> PR_READY -> COMPLETE`
 
 Important failure paths:
 
@@ -100,7 +101,8 @@ Important failure paths:
 - Repeated Vet findings loop until max attempts, then block.
 - Review failure loops back to Pi with a revision prompt.
 - PR check, CodeRabbit, or human review feedback writes `.artifacts/pr/` feedback and loops back to Pi.
-- Repeated PR feedback blocks after `max_pr_feedback_attempts`.
+- Repeated PR feedback blocks after `max_pr_feedback_attempts`; PR feedback rounds do not consume the `max_attempts` execution budget.
+- Unexpected exceptions raised after the run record exists land the run in BLOCKED with the traceback in the blocker artifact.
 - Merge conflicts or unknown mergeability are surfaced as PR feedback or blocker conditions; merge automation is not implemented.
 
 ## Runtime Ignore Pattern
@@ -118,8 +120,5 @@ Runtime excludes include:
 - `.artifacts/completed/`
 - `.artifacts/pr/`
 - `.artifacts/learning/`
-- `.examples/`
 - `*.db`
 - `*.sqlite`
-
-The source workspace can still track curated `.examples/` files.

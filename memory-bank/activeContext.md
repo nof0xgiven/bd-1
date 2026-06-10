@@ -12,7 +12,7 @@ This memory bank replaces scattered working context for future agents. Keep it c
 - Added a full CLI E2E test with fake Pi and fake Vet.
 - Replaced README concept text with current MVP usage.
 - Ran a live smoke test against `ava-realtime`; bd-1 reached `COMPLETE`.
-- Fixed task worktree hygiene after learning capture so `.examples/learning.jsonl` does not leave completed task worktrees dirty.
+- Moved learnings and DSPy examples to the global per-workspace store under `<BD1_HOME>/learning/<workspace>/`; task worktrees only keep per-run learning markdown under `.artifacts/learning/`.
 - Pushed `ava-realtime/main` after committing meeting bridge, OpenAI realtime, and bd-1 workspace artifacts there.
 - Added `src/bd1/pr.py` as the GitHub CLI PR adapter.
 - Added PR publish/update after `REVIEW_PASSED`.

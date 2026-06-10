@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shlex
+import traceback
 from dataclasses import replace
 from pathlib import Path
 
@@ -19,7 +21,11 @@ from bd1.git import (
 from bd1.git import (
     default_branch as git_default_branch,
 )
-from bd1.learning import ExampleStore
+from bd1.learning import (
+    ExampleStore,
+    LearningStore,
+    learning_records_from_output,
+)
 from bd1.models import AttemptRecord, RunRecord, RunState, WorkspaceConfig
 from bd1.paths import global_state_dir, make_run_id, slugify
 from bd1.pi import PiResult, PiRunner
@@ -38,7 +44,6 @@ RUNTIME_EXCLUDES = (
     ".artifacts/blockers/",
     ".artifacts/completed/",
     ".artifacts/learning/",
-    ".examples/",
     "*.db",
     "*.sqlite",
 )
@@ -101,7 +106,10 @@ class Orchestrator:
             pi_provider=config.pi_provider,
         )
         vet_runner = self._vet_runner or VetRunner(vet_command=config.vet_command)
-        pr_runner = self._pr_runner or PrRunner(pr_command=config.pr_command)
+        pr_runner = self._pr_runner or PrRunner(
+            pr_command=config.pr_command,
+            comment_ignore_authors=tuple(config.pr_comment_ignore_authors),
+        )
 
         repo = Path(config.repo_path).expanduser().resolve()
         ensure_git_repo(repo)
@@ -127,14 +135,74 @@ class Orchestrator:
             updated_at=now_iso(),
         )
         self.run_store.write(worktree, record)
+        try:
+            return self._run_pipeline(
+                config=config,
+                task=task,
+                repo=repo,
+                worktree=worktree,
+                record=record,
+                run_id=run_id,
+                branch=branch,
+                base_commit=base_commit,
+                pi_runner=pi_runner,
+                vet_runner=vet_runner,
+                pr_runner=pr_runner,
+            )
+        except Exception as exc:
+            return self._block_unexpected(worktree, run_id, task, exc)
+
+    def _learning_store(self, workspace: str) -> LearningStore:
+        return LearningStore.for_workspace(self.global_root, workspace)
+
+    def _example_store(self, workspace: str) -> ExampleStore:
+        return ExampleStore.for_workspace(self.global_root, workspace)
+
+    def _block_unexpected(
+        self, worktree: Path, run_id: str, task: str, exc: Exception
+    ) -> RunRecord:
+        record = self.run_store.read(worktree / ".sessions" / run_id / "run-record.json")
+        if record.state in (RunState.COMPLETE, RunState.BLOCKED):
+            return record
+        try:
+            evidence: EvidencePackage | None = collect_evidence(
+                worktree, task=task, learning_store=self._learning_store(record.workspace)
+            )
+        except Exception:
+            evidence = None
+        details = "".join(traceback.format_exception(exc)).strip()
+        return self._block(
+            worktree,
+            record,
+            f"Unexpected error: {type(exc).__name__}",
+            details,
+            evidence,
+        )
+
+    def _run_pipeline(
+        self,
+        *,
+        config: WorkspaceConfig,
+        task: str,
+        repo: Path,
+        worktree: Path,
+        record: RunRecord,
+        run_id: str,
+        branch: str,
+        base_commit: str,
+        pi_runner: PiRunner,
+        vet_runner: VetRunner,
+        pr_runner: PrRunner,
+    ) -> RunRecord:
         record = self._transition(worktree, record, RunState.BASE_VERIFIED, "base clean")
         record = self._transition(worktree, record, RunState.WORKTREE_CREATED, "worktree created")
 
+        learning_store = self._learning_store(config.name)
         run_dir = worktree / ".sessions" / run_id
         if config.setup_script:
             setup_result = self.setup_runner.run(worktree, config.setup_script, run_dir)
             if setup_result.exit_code != 0:
-                evidence = collect_evidence(worktree, task=task)
+                evidence = collect_evidence(worktree, task=task, learning_store=learning_store)
                 return self._block(
                     worktree,
                     record,
@@ -143,7 +211,7 @@ class Orchestrator:
                     evidence,
                 )
 
-        evidence = collect_evidence(worktree, task=task)
+        evidence = collect_evidence(worktree, task=task, learning_store=learning_store)
         task_slug = slugify(task)
         discovery_path = worktree / ".artifacts" / "context" / f"{task_slug}.md"
         plan_path = worktree / ".artifacts" / "plans" / f"{task_slug}.md"
@@ -167,8 +235,30 @@ class Orchestrator:
         record = self._transition(worktree, record, RunState.PLAN_COMPLETE, "plan complete")
 
         revision_prompt = ""
+        attempt_number = 0
+        execution_attempts = 0
         pr_feedback_attempts = 0
-        for attempt_number in range(1, config.max_attempts + 1):
+        next_round_is_pr_feedback = False
+        review_history_parts: list[str] = []
+        final_diff_text = ""
+        pr_feedback_text = ""
+        while True:
+            attempt_number += 1
+            if next_round_is_pr_feedback:
+                next_round_is_pr_feedback = False
+            else:
+                execution_attempts += 1
+                if execution_attempts > config.max_attempts:
+                    return self._block(
+                        worktree,
+                        record,
+                        "Max attempts reached",
+                        f"Max attempts reached ({config.max_attempts}).",
+                        evidence,
+                        review_history="\n\n".join(review_history_parts),
+                        final_diff=final_diff_text,
+                        pr_feedback=pr_feedback_text,
+                    )
             attempt_dir = run_dir / f"attempt-{attempt_number}"
             prompt_path = attempt_dir / "prompt.md"
             prompt = revision_prompt or compile_execution_prompt(
@@ -228,30 +318,30 @@ class Orchestrator:
                     RunState.EXECUTION_NEEDS_CLEAN_COMMIT,
                     "pi exited with dirty worktree",
                 )
-                pi_result = pi_runner.run(
+                cleanup_result = pi_runner.run(
                     worktree=worktree,
                     prompt=config.dirty_exit_prompt,
                     session_id=session_id,
                     session_dir=session_dir,
-                    artifact_dir=attempt_dir,
+                    artifact_dir=attempt_dir / "clean-commit",
                 )
-                if pi_result.session_file is None:
+                if cleanup_result.session_file is None:
                     return self._block(
                         worktree,
                         record,
                         "Pi session missing",
-                        pi_result.error or "No Pi session JSONL found.",
+                        cleanup_result.error or "No Pi session JSONL found.",
                         evidence,
-                        pi_result=pi_result,
+                        pi_result=cleanup_result,
                     )
-                if pi_result.exit_code != 0:
+                if cleanup_result.exit_code != 0:
                     return self._block(
                         worktree,
                         record,
                         "Pi failed",
-                        _pi_failure_details(pi_result),
+                        _pi_failure_details(cleanup_result),
                         evidence,
-                        pi_result=pi_result,
+                        pi_result=cleanup_result,
                     )
                 if get_status_porcelain(worktree):
                     return self._block(
@@ -260,25 +350,40 @@ class Orchestrator:
                         "Dirty worktree",
                         "Pi exited with uncommitted changes after clean-commit prompt.",
                         evidence,
-                        pi_result=pi_result,
+                        pi_result=cleanup_result,
                     )
 
             commit_sha = get_head_commit(worktree)
+            if commit_sha == base_commit:
+                return self._block(
+                    worktree,
+                    record,
+                    "Pi made no changes",
+                    "Pi completed without committing any changes.",
+                    evidence,
+                    pi_result=pi_result,
+                )
             diff_path = attempt_dir / "git-diff.patch"
-            write_text(diff_path, diff_from_base(worktree, base_commit), redact=True)
+            final_diff_text = diff_from_base(worktree, base_commit)
+            write_text(diff_path, final_diff_text, redact=True)
             record = self._transition(
                 worktree,
                 record,
                 RunState.EXECUTION_COMMITTED,
                 f"attempt {attempt_number} committed",
             )
+            # Refresh evidence so review and learning see the post-execution worktree,
+            # not the snapshot collected before the attempt ran.
+            evidence = collect_evidence(worktree, task=task, learning_store=learning_store)
 
             vet_result = vet_runner.run(
                 repo_path=worktree,
                 task=task,
                 base_commit=base_commit,
                 model=config.vet_model,
-                history_loader_command=f"bd1-pi-history-loader {pi_result.session_file}",
+                history_loader_command=(
+                    f"bd1-pi-history-loader {shlex.quote(str(pi_result.session_file))}"
+                ),
                 artifact_dir=attempt_dir,
                 confidence_threshold=config.vet_confidence_threshold,
             )
@@ -301,7 +406,18 @@ class Orchestrator:
                     RunState.VET_FAILED_WITH_FINDINGS,
                     vet_result.findings_summary,
                 )
-                self._record_learning(worktree, evidence, record, "vet findings")
+                review_history_parts.append(
+                    f"## Attempt {attempt_number} vet findings\n{vet_result.findings_summary}"
+                )
+                self._safe_record_learning(
+                    worktree,
+                    evidence,
+                    record,
+                    "vet findings",
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
                 revision_prompt = (
                     "Vet found blocking issues. Resolve them and commit before exit.\n\n"
                     f"{vet_result.findings_summary}"
@@ -317,6 +433,9 @@ class Orchestrator:
                     "Vet failed",
                     f"Vet failed with exit {vet_result.exit_code}: {vet_result.findings_summary}",
                     evidence,
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
                 )
 
             record = self._append_attempt(worktree, record, attempt)
@@ -342,9 +461,20 @@ class Orchestrator:
             record = self._replace_last_attempt_review(
                 worktree, record, str(review_path), review.verdict
             )
+            review_history_parts.append(
+                f"## Attempt {attempt_number} review ({review.verdict})\n{review.markdown}"
+            )
             if review.verdict != "PASS":
                 record = self._transition(worktree, record, RunState.REVIEW_FAILED, "review failed")
-                self._record_learning(worktree, evidence, record, "review failed")
+                self._safe_record_learning(
+                    worktree,
+                    evidence,
+                    record,
+                    "review failed",
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
                 revision_prompt = (
                     "Review failed. Resolve the review issues and commit before exit.\n\n"
                     f"{review.markdown}"
@@ -397,11 +527,56 @@ class Orchestrator:
                     feedback_number=pr_feedback_attempts + 1,
                     wait_seconds=config.pr_monitor_wait_seconds,
                     seen_feedback_keys=set(record.pr_seen_feedback_keys),
+                    max_polls=config.max_pr_monitor_polls,
                 )
             except Bd1Error as exc:
                 return self._block(worktree, record, "PR monitoring failed", str(exc), evidence)
 
             record = self._record_pr_result(worktree, record, pr_result)
+
+            pr_state = pr_result.state.upper()
+            if pr_state == "MERGED":
+                record = self._transition(worktree, record, RunState.PR_READY, "PR merged")
+                record = replace(record, final_verdict="PASS")
+                self.run_store.write(worktree, record)
+                self._safe_record_learning(
+                    worktree,
+                    evidence,
+                    record,
+                    "pr merged",
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
+                record = self._transition(worktree, record, RunState.COMPLETE, "complete")
+                return record
+
+            if pr_state == "CLOSED":
+                return self._block(
+                    worktree,
+                    record,
+                    "PR closed",
+                    f"PR #{pr_result.number} was closed without merging. "
+                    "Not creating a replacement PR; investigate the closure and rerun manually.",
+                    evidence,
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
+
+            if pr_result.unsettled:
+                return self._block(
+                    worktree,
+                    record,
+                    "PR checks did not settle",
+                    "PR checks were still pending after "
+                    f"{config.max_pr_monitor_polls} monitor poll(s) of "
+                    f"{config.pr_monitor_wait_seconds}s each.",
+                    evidence,
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
 
             if pr_result.feedback:
                 pr_feedback_attempts += 1
@@ -412,6 +587,9 @@ class Orchestrator:
                         "Max PR feedback attempts reached",
                         f"Max PR feedback attempts reached ({config.max_pr_feedback_attempts}).",
                         evidence,
+                        review_history="\n\n".join(review_history_parts),
+                        final_diff=final_diff_text,
+                        pr_feedback=pr_feedback_text,
                     )
                 record = self._transition(
                     worktree,
@@ -419,24 +597,34 @@ class Orchestrator:
                     RunState.PR_FEEDBACK_RECEIVED,
                     f"PR feedback artifact written: {pr_result.artifact_path}",
                 )
-                self._record_learning(worktree, evidence, record, "pr feedback")
-                revision_prompt = Path(pr_result.artifact_path).read_text(encoding="utf-8")
+                pr_feedback_text = Path(pr_result.artifact_path).read_text(encoding="utf-8")
+                self._safe_record_learning(
+                    worktree,
+                    evidence,
+                    record,
+                    "pr feedback",
+                    review_history="\n\n".join(review_history_parts),
+                    final_diff=final_diff_text,
+                    pr_feedback=pr_feedback_text,
+                )
+                revision_prompt = pr_feedback_text
+                next_round_is_pr_feedback = True
                 continue
 
             record = self._transition(worktree, record, RunState.PR_READY, "PR feedback complete")
             record = replace(record, final_verdict="PASS")
             self.run_store.write(worktree, record)
-            self._record_learning(worktree, evidence, record, "pass")
             record = self._transition(worktree, record, RunState.COMPLETE, "complete")
+            self._safe_record_learning(
+                worktree,
+                evidence,
+                record,
+                "pass",
+                review_history="\n\n".join(review_history_parts),
+                final_diff=final_diff_text,
+                pr_feedback=pr_feedback_text,
+            )
             return record
-
-        return self._block(
-            worktree,
-            record,
-            "Max attempts reached",
-            f"Max attempts reached ({config.max_attempts}).",
-            evidence,
-        )
 
     def _transition(
         self, worktree: Path, record: RunRecord, state: RunState, reason: str
@@ -522,9 +710,12 @@ class Orchestrator:
         record: RunRecord,
         title: str,
         details: str,
-        evidence: EvidencePackage,
+        evidence: EvidencePackage | None,
         *,
         pi_result: PiResult | None = None,
+        review_history: str = "",
+        final_diff: str = "",
+        pr_feedback: str = "",
     ) -> RunRecord:
         blocker_path = worktree / ".artifacts" / "blockers" / f"{record.run_id}.md"
         write_text(
@@ -544,16 +735,82 @@ class Orchestrator:
         )
         updated = replace(record, blocker_path=str(blocker_path), final_verdict="BLOCKED")
         self.run_store.write(worktree, updated)
-        self._record_learning(worktree, evidence, updated, title.lower())
-        return self._transition(worktree, updated, RunState.BLOCKED, title)
+        updated = self._transition(worktree, updated, RunState.BLOCKED, title)
+        self._safe_record_learning(
+            worktree,
+            evidence,
+            updated,
+            title.lower(),
+            review_history=review_history,
+            final_diff=final_diff,
+            pr_feedback=pr_feedback,
+        )
+        return updated
+
+    def _safe_record_learning(
+        self,
+        worktree: Path,
+        evidence: EvidencePackage | None,
+        record: RunRecord,
+        event: str,
+        *,
+        review_history: str = "",
+        final_diff: str = "",
+        pr_feedback: str = "",
+    ) -> None:
+        if evidence is None:
+            return
+        try:
+            self._record_learning(
+                worktree,
+                evidence,
+                record,
+                event,
+                review_history=review_history,
+                final_diff=final_diff,
+                pr_feedback=pr_feedback,
+            )
+        except Exception as exc:
+            note_path = (
+                worktree / ".artifacts" / "learning" / f"{record.run_id}-{slugify(event)}-error.md"
+            )
+            try:
+                write_text(
+                    note_path,
+                    f"Learning capture failed for event '{event}': {exc}\n",
+                    redact=True,
+                )
+            except OSError:
+                return
 
     def _record_learning(
-        self, worktree: Path, evidence: EvidencePackage, record: RunRecord, event: str
+        self,
+        worktree: Path,
+        evidence: EvidencePackage,
+        record: RunRecord,
+        event: str,
+        *,
+        review_history: str = "",
+        final_diff: str = "",
+        pr_feedback: str = "",
     ) -> None:
-        output = self.reasoning.learn(evidence, review_markdown=event)
+        review_markdown = f"{event}\n\n{review_history}" if review_history else event
+        output = self.reasoning.learn(
+            evidence,
+            review_markdown=review_markdown,
+            final_diff=final_diff,
+            pr_feedback=pr_feedback,
+        )
+        # Per-run markdown artifact stays in the worktree for traceability.
         path = worktree / ".artifacts" / "learning" / f"{record.run_id}-{slugify(event)}.md"
         write_text(path, output.markdown, redact=True)
-        ExampleStore(worktree).append_example(
+        # Durable learnings and examples live in the global per-workspace store.
+        learning_store = self._learning_store(record.workspace)
+        for learning in learning_records_from_output(
+            output.learnings, run_id=record.run_id, task=record.task, event=slugify(event)
+        ):
+            learning_store.save_learning(learning)
+        self._example_store(record.workspace).append_example(
             "learning",
             {"run_id": record.run_id, "event": event, "markdown": output.markdown},
         )

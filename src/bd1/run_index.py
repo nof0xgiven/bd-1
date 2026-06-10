@@ -59,6 +59,11 @@ class RunIndex:
 
     def rebuild_from_workspace(self, repo_path: str | Path) -> None:
         sessions_dir = Path(repo_path) / ".sessions"
+        if not sessions_dir.is_dir():
+            return
         for record_path in sorted(sessions_dir.glob("*/run-record.json")):
-            record = RunRecord.from_dict(json.loads(record_path.read_text(encoding="utf-8")))
+            try:
+                record = RunRecord.from_dict(json.loads(record_path.read_text(encoding="utf-8")))
+            except (OSError, KeyError, TypeError, ValueError):
+                continue
             self.upsert_run(record)

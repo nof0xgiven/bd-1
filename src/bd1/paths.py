@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -16,8 +17,10 @@ def slugify(value: str, max_length: int = 60) -> str:
     return slug[:max_length].strip("-") or "task"
 
 
-def make_run_id(task: str, now: str | None = None) -> str:
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    if now is not None:
-        stamp = now.replace("-", "").replace(":", "").replace("+00:00", "Z")
-    return f"run-{stamp}-{slugify(task)}"
+def make_run_id(task: str, now: str | None = None, *, suffix: str | None = None) -> str:
+    moment = datetime.now(UTC) if now is None else datetime.fromisoformat(now)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    stamp = moment.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    token = secrets.token_hex(2) if suffix is None else suffix
+    return f"run-{stamp}-{slugify(task)}-{token}"

@@ -1,4 +1,9 @@
+import re
+
+import pytest
+
 from bd1.config import default_workspace_config
+from bd1.errors import WorkspaceConfigError
 from bd1.models import (
     AttemptRecord,
     FeedbackRecord,
@@ -12,9 +17,21 @@ from bd1.paths import make_run_id, slugify
 
 def test_slugify_and_run_id_are_stable():
     assert slugify("Add billing webhook retry!") == "add-billing-webhook-retry"
-    assert make_run_id("Fix API drift", now="2026-06-09T12:34:56Z") == (
-        "run-20260609T123456Z-fix-api-drift"
+    assert make_run_id("Fix API drift", now="2026-06-09T12:34:56Z", suffix="ab12") == (
+        "run-20260609T123456Z-fix-api-drift-ab12"
     )
+
+
+def test_make_run_id_normalizes_offset_timestamps_to_utc():
+    assert make_run_id("Fix API drift", now="2026-06-09T12:34:56+02:00", suffix="ab12") == (
+        "run-20260609T103456Z-fix-api-drift-ab12"
+    )
+
+
+def test_make_run_id_appends_random_suffix_by_default():
+    run_id = make_run_id("Fix API drift", now="2026-06-09T12:34:56Z")
+
+    assert re.fullmatch(r"run-20260609T123456Z-fix-api-drift-[0-9a-f]{4}", run_id)
 
 
 def test_workspace_config_round_trips():
@@ -32,14 +49,19 @@ def test_workspace_config_round_trips():
         vet_model="flash",
         vet_confidence_threshold=0.8,
         dspy_model="openai/gpt-5-mini",
-        artifact_policy="curated",
-        dirty_base_policy="fail_fast",
-        require_clean_committed_attempt=True,
         dirty_exit_prompt="commit and resolve before exit",
-        worktree_root_policy="global",
     )
 
     assert WorkspaceConfig.from_dict(config.to_dict()) == config
+
+
+def test_workspace_config_rejects_unknown_keys():
+    config = default_workspace_config("demo", "/repo", "Demo")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        WorkspaceConfig.from_dict({**config.to_dict(), "artifact_policy": "curated"})
+
+    assert "artifact_policy" in str(exc.value)
 
 
 def test_workspace_config_preserves_pr_lifecycle_fields():
@@ -48,8 +70,10 @@ def test_workspace_config_preserves_pr_lifecycle_fields():
     assert config.pr_command == "gh"
     assert config.pr_monitor_wait_seconds == 600
     assert config.max_pr_feedback_attempts == 3
+    assert config.max_pr_monitor_polls == 6
     assert config.pr_base_branch == ""
     assert config.pr_draft is False
+    assert config.pr_comment_ignore_authors == []
 
     restored = WorkspaceConfig.from_dict(config.to_dict())
 

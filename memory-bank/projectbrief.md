@@ -32,7 +32,7 @@ Current MVP scope:
 - File-authoritative run state.
 - Global state in `~/.bd-1` or `BD1_HOME`.
 - Workspace-local config in `.bd-1.toml`.
-- Workspace-local durable artifacts in `.artifacts/`, `.learning/`, and `.examples/`.
+- Workspace-local durable artifacts in `.artifacts/`; learnings and examples in the global store under `<BD1_HOME>/learning/<workspace>/`.
 - Raw sessions and rebuildable indexes ignored from normal commits.
 - Pi execution via `pi -p`.
 - Vet execution via `vet`.

@@ -1,4 +1,7 @@
 import inspect
+from types import SimpleNamespace
+
+import pytest
 
 from bd1.dspy_programs import (
     CreateImplementationPlan,
@@ -8,7 +11,9 @@ from bd1.dspy_programs import (
     ExtractLearning,
     ReviewOutput,
     TemplateReasoningPrograms,
+    normalize_review_verdict,
 )
+from bd1.errors import ReasoningOutputError
 from bd1.evidence import EvidencePackage
 
 
@@ -21,11 +26,37 @@ def test_template_reasoning_is_test_only_fallback():
     assert "Fix bug" in output.markdown
 
 
-def test_review_output_normalizes_non_pass_verdicts_to_fail():
-    assert ReviewOutput("PASS", "No issues.").verdict == "PASS"
-    assert ReviewOutput("pass", "No issues.").verdict == "PASS"
-    assert ReviewOutput("NEEDS_WORK", "Issue found.").verdict == "FAIL"
-    assert ReviewOutput("", "Issue found.").verdict == "FAIL"
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("PASS", "PASS"),
+        ("pass", "PASS"),
+        ("**PASS**", "PASS"),
+        ("PASS - safe to merge", "PASS"),
+        ("Verdict: PASS.", "PASS"),
+        ("FAIL", "FAIL"),
+        ("**FAIL**", "FAIL"),
+        ("REVISE", "FAIL"),
+        ("NEEDS_WORK", "FAIL"),
+        ("", "FAIL"),
+        ("garbage output with no verdict", "FAIL"),
+    ],
+)
+def test_review_verdict_is_binary_and_fails_closed(raw, expected):
+    assert normalize_review_verdict(raw) == expected
+    assert ReviewOutput(raw, "Review body.").verdict == expected
+
+
+def test_review_output_preserves_raw_verdict_for_artifacts():
+    output = ReviewOutput("**PASS** - safe to merge", "Review body.")
+
+    assert output.verdict == "PASS"
+    assert output.raw_verdict == "**PASS** - safe to merge"
+
+
+def test_review_signature_is_binary_without_revision_prompt():
+    assert "revision_prompt" not in DecideReviewOutcome.__annotations__
+    assert "PASS | FAIL" in DecideReviewOutcome.output_fields["verdict"].json_schema_extra["desc"]
 
 
 def test_review_interface_accepts_full_execution_evidence_without_live_model_calls():
@@ -91,6 +122,92 @@ def test_dspy_live_programs_use_documented_signatures_without_model_calls():
         "pr_feedback",
         "review_history",
     }.issubset(ExtractLearning.__annotations__)
+
+
+def _evidence() -> EvidencePackage:
+    return EvidencePackage("Fix bug", "/repo", "README.md", "# Rules", "", "")
+
+
+def _stub_program(prediction):
+    def run(**kwargs):
+        return prediction
+
+    return run
+
+
+def test_discover_raises_when_markdown_is_missing_or_empty():
+    programs = DspyReasoningPrograms(discovery=_stub_program(SimpleNamespace()))
+    with pytest.raises(ReasoningOutputError):
+        programs.discover(_evidence())
+
+    programs = DspyReasoningPrograms(
+        discovery=_stub_program(SimpleNamespace(context_package_markdown=None))
+    )
+    with pytest.raises(ReasoningOutputError):
+        programs.discover(_evidence())
+
+    programs = DspyReasoningPrograms(
+        discovery=_stub_program(SimpleNamespace(context_package_markdown="  "))
+    )
+    with pytest.raises(ReasoningOutputError):
+        programs.discover(_evidence())
+
+
+def test_plan_raises_when_markdown_is_missing():
+    programs = DspyReasoningPrograms(planner=_stub_program(SimpleNamespace(plan_markdown=None)))
+    with pytest.raises(ReasoningOutputError):
+        programs.plan(_evidence(), discovery_context="ctx")
+
+
+def test_review_raises_on_empty_markdown_and_defaults_missing_verdict_to_fail():
+    programs = DspyReasoningPrograms(reviewer=_stub_program(SimpleNamespace(verdict="PASS")))
+    with pytest.raises(ReasoningOutputError):
+        programs.review(
+            task="Fix bug",
+            discovery_context="ctx",
+            implementation_plan="plan",
+            pi_completion_summary="done",
+            command_output_summary="ok",
+            git_diff="diff",
+            vet_json="{}",
+            workspace_artifacts="rules",
+        )
+
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(SimpleNamespace(review_markdown="# Review"))
+    )
+    output = programs.review(
+        task="Fix bug",
+        discovery_context="ctx",
+        implementation_plan="plan",
+        pi_completion_summary="done",
+        command_output_summary="ok",
+        git_diff="diff",
+        vet_json="{}",
+        workspace_artifacts="rules",
+    )
+    assert output.verdict == "FAIL"
+    assert output.raw_verdict == ""
+    assert "None" not in output.markdown
+
+
+def test_learn_tolerates_missing_attributes_with_empty_defaults():
+    programs = DspyReasoningPrograms(learning_extractor=_stub_program(SimpleNamespace()))
+
+    output = programs.learn(_evidence(), review_markdown="history")
+
+    assert output.learnings == []
+    assert output.examples == []
+    assert '"learnings": []' in output.markdown
+
+    programs = DspyReasoningPrograms(
+        learning_extractor=_stub_program(
+            SimpleNamespace(learnings=None, examples="not-a-list", rejected_observations=None)
+        )
+    )
+    output = programs.learn(_evidence(), review_markdown="history")
+    assert output.learnings == []
+    assert output.examples == []
 
 
 def test_learning_interface_accepts_diff_and_feedback_without_live_model_calls():

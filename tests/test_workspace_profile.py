@@ -2,9 +2,19 @@ import subprocess
 
 import pytest
 
-from bd1.errors import DirtyRepositoryError
+from bd1.errors import DirtyRepositoryError, WorkspaceConfigError
 from bd1.registry import WorkspaceRegistry
 from bd1.workspace import add_workspace, profile_workspace
+
+
+@pytest.mark.parametrize("name", ["", "-demo", "demo/evil", "demo space", "../demo"])
+def test_add_workspace_rejects_unsafe_names(tmp_path, init_git_repo, name):
+    repo = init_git_repo(tmp_path / "repo")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        add_workspace(name, repo, "Demo", registry=WorkspaceRegistry(tmp_path / "state"))
+
+    assert "Invalid workspace name" in str(exc.value)
 
 
 def test_add_workspace_fails_on_dirty_repo(tmp_path, init_git_repo):

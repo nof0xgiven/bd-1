@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from bd1.artifacts import write_text
 from bd1.errors import WorkspaceConfigError
 from bd1.models import WorkspaceConfig
 
@@ -36,6 +37,4 @@ class WorkspaceRegistry:
 
     def _write(self, workspaces: dict[str, dict[str, object]]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(workspaces, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        write_text(self.path, json.dumps(workspaces, indent=2, sort_keys=True) + "\n", redact=False)

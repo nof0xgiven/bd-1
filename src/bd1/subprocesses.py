@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from bd1.errors import CommandStartError
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -39,13 +41,17 @@ def run_command(
             cwd=Path(cwd),
             env=merged_env,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
         stderr = _timeout_output(exc.stderr) or "command timed out"
         return CommandResult(124, _timeout_output(exc.stdout), stderr, list(command))
+    except OSError as exc:
+        raise CommandStartError(f"Unable to start command: {' '.join(command)}: {exc}") from exc
 
     return CommandResult(
         exit_code=completed.returncode,

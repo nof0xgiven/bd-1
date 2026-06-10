@@ -91,9 +91,15 @@ class PiRunner:
 def _latest_session_file(session_dir: Path) -> Path | None:
     if not session_dir.exists():
         return None
-    files = sorted(
-        (path for path in session_dir.rglob("*.jsonl") if path.is_file()),
-        key=lambda path: (path.stat().st_mtime_ns, path.as_posix()),
-        reverse=True,
-    )
-    return files[0] if files else None
+    candidates: list[tuple[int, str, Path]] = []
+    for path in session_dir.rglob("*.jsonl"):
+        try:
+            if not path.is_file():
+                continue
+            candidates.append((path.stat().st_mtime_ns, path.as_posix(), path))
+        except FileNotFoundError:
+            # The file disappeared between discovery and stat; skip it.
+            continue
+    if not candidates:
+        return None
+    return max(candidates)[2]

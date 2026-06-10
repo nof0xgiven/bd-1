@@ -1,11 +1,19 @@
 import json
+from dataclasses import replace
+from pathlib import Path
 from typing import ClassVar
+
+import pytest
 
 from bd1.cli import build_parser, main, read_task_argument
 from bd1.config import default_workspace_config, write_workspace_config
+from bd1.errors import Bd1Error
+from bd1.git import branch_exists
 from bd1.models import RunRecord, RunState
+from bd1.orchestrator import Orchestrator
 from bd1.registry import WorkspaceRegistry
 from bd1.run_store import RunStore
+from tests.fakes import FakePiRunner, FakePrRunner, FakeReasoning, FakeVetRunner
 
 
 def test_run_accepts_task_without_workspace():
@@ -191,8 +199,22 @@ def test_status_reads_authoritative_run_and_refreshes_index(tmp_path, capsys, mo
     assert (tmp_path / "state" / "runs.db").exists()
 
 
-def test_feedback_writes_record_and_updates_authoritative_run(tmp_path, monkeypatch):
-    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+def _feedback_args(run_id: str) -> list[str]:
+    return [
+        "feedback",
+        run_id,
+        "--outcome",
+        "wrong_behavior",
+        "--wrong-or-missing",
+        "Missed test",
+        "--expected",
+        "Add test",
+    ]
+
+
+def test_feedback_writes_record_and_updates_authoritative_run(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
     monkeypatch.setenv("BD1_REASONING", "template")
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -207,26 +229,209 @@ def test_feedback_writes_record_and_updates_authoritative_run(tmp_path, monkeypa
         created_at="2026-06-09T12:00:00Z",
         updated_at="2026-06-09T12:01:00Z",
     )
-    store = RunStore(tmp_path / "state")
+    store = RunStore(state)
     store.write(repo, record)
 
-    assert (
-        main(
-            [
-                "feedback",
-                "run-1",
-                "--outcome",
-                "wrong_behavior",
-                "--wrong-or-missing",
-                "Missed test",
-                "--expected",
-                "Add test",
-            ]
-        )
-        == 0
-    )
+    assert main(_feedback_args("run-1")) == 0
 
     updated = store.read_by_id("run-1")
     assert len(updated.feedback_paths) == 1
-    assert (repo / ".sessions" / "run-1" / "feedback.json").exists()
+    assert (repo / ".sessions" / "run-1" / "feedback-001.json").exists()
     assert (repo / ".artifacts" / "learning" / "run-1-feedback.md").exists()
+    store_root = state / "learning" / "demo"
+    assert (store_root / "learning.jsonl").exists()
+    assert list((store_root / "learnings").glob("*.json"))
+    output = capsys.readouterr().out
+    assert "feedback-001.json" in output
+    assert "pending=1" in output
+
+
+def test_feedback_twice_keeps_both_records_without_duplicate_paths(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(repo),
+        state=RunState.COMPLETE,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+    )
+    store = RunStore(state)
+    store.write(repo, record)
+
+    assert main(_feedback_args("run-1")) == 0
+    assert main(_feedback_args("run-1")) == 0
+
+    updated = store.read_by_id("run-1")
+    assert (repo / ".sessions" / "run-1" / "feedback-001.json").exists()
+    assert (repo / ".sessions" / "run-1" / "feedback-002.json").exists()
+    assert len(updated.feedback_paths) == 2
+    assert len(set(updated.feedback_paths)) == 2
+
+
+def test_feedback_survives_cleaned_worktree(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    record_dir = tmp_path / "record-dir"
+    record_dir.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(tmp_path / "gone"),
+        state=RunState.COMPLETE,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+    )
+    store = RunStore(state)
+    store.write(record_dir, record)
+    store.archive(record)
+
+    assert main(_feedback_args("run-1")) == 0
+
+    archive_dir = state / "runs" / "run-1"
+    assert (archive_dir / "feedback-001.json").exists()
+    updated = store.read_by_id("run-1")
+    assert updated.feedback_paths == [str(archive_dir / "feedback-001.json")]
+    store_root = state / "learning" / "demo"
+    assert list((store_root / "learnings").glob("*.json"))
+    assert not (tmp_path / "gone").exists()
+    output = capsys.readouterr().out
+    assert "feedback-001.json" in output
+
+
+def test_read_task_argument_missing_file_raises_friendly_error(tmp_path):
+    with pytest.raises(Bd1Error) as exc:
+        read_task_argument(None, str(tmp_path / "missing.md"))
+
+    assert "Unable to read task file" in str(exc.value)
+
+
+class FakeBlockedOrchestrator(FakeOrchestrator):
+    def run(self, config, task):
+        record = super().run(config, task)
+        self.__class__.calls[-1] = (config, task, self.kwargs)
+        return replace(record, state=RunState.BLOCKED, final_verdict="BLOCKED")
+
+
+def test_run_returns_exit_code_2_when_run_is_blocked(tmp_path, init_git_repo, monkeypatch, capsys):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config("demo", str(repo), "Demo product", "", "main")
+    write_workspace_config(repo, config)
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    monkeypatch.setattr("bd1.cli.Orchestrator", FakeBlockedOrchestrator)
+    FakeBlockedOrchestrator.calls = []
+
+    assert main(["run", "Fix bug"]) == 2
+
+    assert json.loads(capsys.readouterr().out)["state"] == "BLOCKED"
+
+
+def test_status_unknown_run_id_prints_friendly_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+
+    assert main(["status", "run-missing"]) == 1
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Unknown run id: run-missing" in captured.err
+
+
+def test_clean_archives_run_and_removes_worktree_and_branch(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config("demo", str(repo), "Demo product", "", "main")
+    WorkspaceRegistry(state).add(config)
+    orchestrator = Orchestrator(
+        global_root=state,
+        reasoning=FakeReasoning(["PASS"]),
+        pi_runner=FakePiRunner(),
+        vet_runner=FakeVetRunner([0]),
+        pr_runner=FakePrRunner(),
+    )
+    record = orchestrator.run(config, "Fix bug")
+    assert record.state is RunState.COMPLETE
+    worktree = Path(record.worktree)
+
+    assert main(["clean", record.run_id]) == 0
+
+    clean_output = json.loads(capsys.readouterr().out)
+    assert clean_output["worktree_removed"] is True
+    assert clean_output["branch_deleted"] is True
+    assert not worktree.exists()
+    assert not branch_exists(repo, record.branch)
+    archive_dir = state / "runs" / record.run_id
+    assert (archive_dir / "run-record.json").exists()
+    assert (archive_dir / "transitions.jsonl").exists()
+
+    assert main(["status", record.run_id]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["run_id"] == record.run_id
+    assert status["state"] == "COMPLETE"
+
+
+def test_clean_rejects_non_terminal_run(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(repo),
+        state=RunState.EXECUTION_RUNNING,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+    )
+    RunStore(state).write(repo, record)
+
+    assert main(["clean", "run-1"]) == 1
+
+    assert "only COMPLETE or BLOCKED" in capsys.readouterr().err
+
+
+def test_clean_handles_already_missing_worktree(tmp_path, init_git_repo, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    repo = init_git_repo(tmp_path / "repo")
+    WorkspaceRegistry(state).add(default_workspace_config("demo", str(repo), "Demo", "", "main"))
+    record_dir = tmp_path / "record-dir"
+    record_dir.mkdir()
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(tmp_path / "gone"),
+        state=RunState.BLOCKED,
+        created_at="2026-06-09T12:00:00Z",
+        updated_at="2026-06-09T12:01:00Z",
+        final_verdict="BLOCKED",
+    )
+    RunStore(state).write(record_dir, record)
+
+    assert main(["clean", "run-1"]) == 0
+
+    clean_output = json.loads(capsys.readouterr().out)
+    assert clean_output["worktree_removed"] is False
+    assert clean_output["branch_deleted"] is False
+    assert (state / "runs" / "run-1" / "run-record.json").exists()

@@ -29,7 +29,7 @@ uv run bd-1 workspace add \
 The command writes `.bd-1.toml` plus profile artifacts under `.artifacts/`. Review and commit the generated workspace files before running tasks:
 
 ```bash
-git -C /Users/ava/main/projects/ava-realtime add .bd-1.toml .artifacts .learning .examples
+git -C /Users/ava/main/projects/ava-realtime add .bd-1.toml .artifacts
 git -C /Users/ava/main/projects/ava-realtime commit -m "chore: add bd-1 workspace artifacts"
 ```
 
@@ -96,9 +96,10 @@ Workspace setup creates durable, reviewable files:
 .artifacts/design.md
 .artifacts/rules.md
 .artifacts/product.md
-.learning/
-.examples/
 ```
+
+Learnings and DSPy examples are stored globally under `<BD1_HOME>/learning/<workspace>/`
+(default `~/.bd-1/learning/<workspace>/`) so they persist across task worktrees.
 
 PR lifecycle defaults are written to `.bd-1.toml`:
 

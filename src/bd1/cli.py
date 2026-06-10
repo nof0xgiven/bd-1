@@ -12,9 +12,10 @@ from bd1.config import CONFIG_FILE, load_workspace_config
 from bd1.dspy_programs import DspyReasoningPrograms, TemplateReasoningPrograms
 from bd1.errors import Bd1Error, WorkspaceConfigError
 from bd1.evidence import collect_evidence
-from bd1.feedback import write_feedback
-from bd1.learning import ExampleStore, LearningStore
-from bd1.models import FeedbackRecord, WorkspaceConfig
+from bd1.feedback import write_feedback, write_feedback_in_dir
+from bd1.git import branch_exists, delete_branch, prune_worktrees, remove_worktree
+from bd1.learning import ExampleStore, LearningStore, learning_records_from_output
+from bd1.models import FeedbackRecord, RunState, WorkspaceConfig
 from bd1.orchestrator import Orchestrator
 from bd1.paths import global_state_dir
 from bd1.registry import WorkspaceRegistry
@@ -47,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     status = subcommands.add_parser("status")
     status.add_argument("run_id")
 
+    clean = subcommands.add_parser("clean")
+    clean.add_argument("run_id")
+
     feedback = subcommands.add_parser("feedback")
     feedback.add_argument("run_id")
     feedback.add_argument("--outcome", required=True)
@@ -65,7 +69,10 @@ def read_task_argument(task: str | None, task_file: str | None) -> str:
     if task and task_file:
         raise SystemExit("Use either a task argument or --file, not both.")
     if task_file:
-        return Path(task_file).read_text(encoding="utf-8").strip()
+        try:
+            return Path(task_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise Bd1Error(f"Unable to read task file {task_file}: {exc}") from exc
     if task:
         return task.strip()
     raise SystemExit("A task argument or --file is required.")
@@ -84,6 +91,8 @@ def main(argv: list[str] | None = None) -> int:
             return _handle_run(args, registry, state_dir)
         if args.command == "status":
             return _handle_status(args, state_dir)
+        if args.command == "clean":
+            return _handle_clean(args, registry, state_dir)
         if args.command == "feedback":
             return _handle_feedback(args, registry, state_dir)
         return 0
@@ -153,7 +162,7 @@ def _handle_run(
     reasoning = _build_reasoning(config)
     record = Orchestrator(global_root=state_dir, reasoning=reasoning).run(config, task)
     print(json.dumps({"run_id": record.run_id, "state": record.state.value}, sort_keys=True))
-    return 0
+    return 0 if record.state is RunState.COMPLETE and record.final_verdict == "PASS" else 2
 
 
 def _handle_status(args: argparse.Namespace, state_dir: Path) -> int:
@@ -164,6 +173,50 @@ def _handle_status(args: argparse.Namespace, state_dir: Path) -> int:
     return 0
 
 
+def _handle_clean(
+    args: argparse.Namespace,
+    registry: WorkspaceRegistry,
+    state_dir: Path,
+) -> int:
+    run_store = RunStore(state_dir)
+    record = run_store.read_by_id(args.run_id)
+    if record.state not in (RunState.COMPLETE, RunState.BLOCKED):
+        raise Bd1Error(
+            f"Run {record.run_id} is in state {record.state.value}; "
+            "only COMPLETE or BLOCKED runs can be cleaned."
+        )
+
+    run_store.archive(record)
+
+    config = registry.get(record.workspace)
+    repo = Path(config.repo_path)
+    worktree = Path(record.worktree)
+    worktree_removed = False
+    if worktree.exists():
+        remove_worktree(repo, worktree)
+        worktree_removed = True
+    else:
+        prune_worktrees(repo)
+
+    branch_deleted = False
+    if record.branch and branch_exists(repo, record.branch):
+        delete_branch(repo, record.branch)
+        branch_deleted = True
+
+    print(
+        json.dumps(
+            {
+                "run_id": record.run_id,
+                "archived_to": str(run_store.archive_dir(record.run_id)),
+                "worktree_removed": worktree_removed,
+                "branch_deleted": branch_deleted,
+            },
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def _handle_feedback(
     args: argparse.Namespace,
     registry: WorkspaceRegistry,
@@ -171,7 +224,11 @@ def _handle_feedback(
 ) -> int:
     run_store = RunStore(state_dir)
     record = run_store.read_by_id(args.run_id)
-    repo_path = Path(record.worktree)
+    worktree = Path(record.worktree)
+    worktree_exists = worktree.is_dir()
+    learning_store = LearningStore.for_workspace(state_dir, record.workspace)
+    example_store = ExampleStore.for_workspace(state_dir, record.workspace)
+
     feedback = FeedbackRecord(
         run_id=record.run_id,
         created_at=now_iso(),
@@ -182,12 +239,21 @@ def _handle_feedback(
         commit=args.commit,
         learning_candidate=args.learning_candidate,
     )
-    feedback_path = write_feedback(repo_path, feedback)
-    updated = replace(record, feedback_paths=[*record.feedback_paths, str(feedback_path)])
-    run_store.write(repo_path, updated)
+    if worktree_exists:
+        feedback_path = write_feedback(worktree, feedback)
+    else:
+        feedback_path = write_feedback_in_dir(run_store.archive_dir(record.run_id), feedback)
+    feedback_paths = list(record.feedback_paths)
+    if str(feedback_path) not in feedback_paths:
+        feedback_paths.append(str(feedback_path))
+    updated = replace(record, feedback_paths=feedback_paths)
+    if worktree_exists:
+        run_store.write(worktree, updated)
+    else:
+        run_store.write_archived(updated)
 
     reasoning = _build_reasoning_for_run(record.workspace, registry)
-    evidence = collect_evidence(repo_path, task=record.task)
+    evidence = collect_evidence(worktree, task=record.task, learning_store=learning_store)
     learning = reasoning.learn(
         evidence,
         review_markdown=(
@@ -196,14 +262,31 @@ def _handle_feedback(
             f"expected={feedback.expected}"
         ),
     )
-    learning_path = repo_path / ".artifacts" / "learning" / f"{record.run_id}-feedback.md"
-    write_text(learning_path, learning.markdown, redact=True)
-    ExampleStore(repo_path).append_example(
+    if worktree_exists:
+        learning_path = worktree / ".artifacts" / "learning" / f"{record.run_id}-feedback.md"
+        write_text(learning_path, learning.markdown, redact=True)
+    for learning_record in learning_records_from_output(
+        learning.learnings, run_id=record.run_id, task=record.task, event="feedback"
+    ):
+        learning_store.save_learning(learning_record)
+    example_store.append_example(
         "learning",
         {"run_id": record.run_id, "event": "feedback", "markdown": learning.markdown},
     )
-    LearningStore(repo_path).write_terminal_summary()
+    learning_store.write_terminal_summary(example_store)
+    summary = learning_store.terminal_summary(example_store)
     print(str(feedback_path))
+    print(
+        "learnings: "
+        f"active={summary['active']} pending={summary['pending']} "
+        f"rejected={summary['rejected']} superseded={summary['superseded']} "
+        f"examples={summary['examples'].get('total', 0)}"
+    )
+    if summary["corrupt_files"]:
+        print(
+            "warning: skipped corrupt learning files: " + ", ".join(summary["corrupt_files"]),
+            file=sys.stderr,
+        )
     return 0
 
 

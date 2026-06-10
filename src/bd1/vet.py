@@ -94,9 +94,10 @@ def _outcome_for_exit_code(exit_code: int) -> str:
 
 
 def _findings_summary(output_path: Path, stderr: str) -> str:
-    if output_path.exists() and output_path.read_text(encoding="utf-8").strip():
+    raw = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
+    if raw.strip():
         try:
-            data = json.loads(output_path.read_text(encoding="utf-8"))
+            data = json.loads(raw)
         except json.JSONDecodeError:
             return stderr.strip()
         summary = _summarize_json(data)

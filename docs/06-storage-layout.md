@@ -25,15 +25,6 @@ workspace-root/
     pr/
       <task-name>-01.md
       <task-name>-01-complete.md
-  .learning/
-    learnings/
-      <learning-id>.json
-    index.json
-  .examples/
-    discovery.jsonl
-    planning.jsonl
-    review.jsonl
-    learning.jsonl
   .sessions/
     <run-id>/
       run-record.json
@@ -45,15 +36,27 @@ workspace-root/
 
 ## Global storage
 
-The orchestrator can maintain global state outside repos:
+The orchestrator maintains global state outside repos under `BD1_HOME` (default `~/.bd-1`):
 
 ```text
-.compound/
+<BD1_HOME>/
   workspaces.json
   runs/
+  worktrees/
   compiled-dspy/
   logs/
+  learning/
+    <workspace-name>/
+      learnings/
+        <learning-id>.json
+      learning.jsonl
+      index.json
+      terminal-summary.json
 ```
+
+Learnings and DSPy examples are global per workspace so they survive task
+worktree cleanup and compound across runs. They are not stored inside the
+workspace repository.
 
 ## Naming conventions
 

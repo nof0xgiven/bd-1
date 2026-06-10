@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from bd1.artifacts import ensure_global_dirs, ensure_workspace_dirs, write_text
 from bd1.config import default_workspace_config, write_workspace_config
+from bd1.errors import WorkspaceConfigError
 from bd1.git import default_branch as detect_default_branch
 from bd1.git import ensure_clean_repo, ensure_git_repo
 from bd1.models import WorkspaceConfig
@@ -12,6 +14,8 @@ from bd1.paths import global_state_dir
 from bd1.registry import WorkspaceRegistry
 
 NO_EVIDENCE = "No evidence found in scanned files."
+
+WORKSPACE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 PROFILE_FILES = ("README.md", "AGENTS.md", "CLAUDE.md", "pyproject.toml", "package.json")
 PROFILE_ARTIFACTS = {
@@ -45,6 +49,11 @@ def add_workspace(
     default_branch: str = "",
     registry: WorkspaceRegistry | None = None,
 ) -> WorkspaceAddResult:
+    if not WORKSPACE_NAME_RE.fullmatch(name):
+        raise WorkspaceConfigError(
+            f"Invalid workspace name: {name!r}. Use letters, digits, '-' or '_', "
+            "starting with a letter or digit."
+        )
     repo_path = Path(repo).expanduser().resolve()
     ensure_git_repo(repo_path)
     ensure_clean_repo(repo_path)
@@ -66,7 +75,8 @@ def add_workspace(
 
     guidance = (
         "Review and commit generated bd-1 workspace files before task runs: "
-        ".bd-1.toml, .artifacts/, .learning/, and .examples/."
+        ".bd-1.toml and .artifacts/. "
+        "Learnings and examples are stored globally under BD1_HOME."
     )
     return WorkspaceAddResult(config=config, guidance=guidance)
 
@@ -146,7 +156,7 @@ def _read_profile_sources(repo: Path) -> list[SourceEvidence]:
 
 
 def _read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="ignore").strip()
+    return path.read_text(encoding="utf-8", errors="replace").strip()
 
 
 def _matching_sources(

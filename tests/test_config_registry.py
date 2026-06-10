@@ -1,4 +1,7 @@
+import pytest
+
 from bd1.config import default_workspace_config, load_workspace_config, write_workspace_config
+from bd1.errors import WorkspaceConfigError
 from bd1.registry import WorkspaceRegistry
 
 
@@ -47,11 +50,7 @@ def test_load_workspace_config_supports_existing_files_without_pr_fields(tmp_pat
                 'vet_model = "flash"',
                 "vet_confidence_threshold = 0.8",
                 'dspy_model = "openai/gpt-5-mini"',
-                'artifact_policy = "curated"',
-                'dirty_base_policy = "fail_fast"',
-                "require_clean_committed_attempt = true",
                 'dirty_exit_prompt = "commit and resolve before exit"',
-                'worktree_root_policy = "global"',
                 "",
             ]
         ),
@@ -63,5 +62,21 @@ def test_load_workspace_config_supports_existing_files_without_pr_fields(tmp_pat
     assert config.pr_command == "gh"
     assert config.pr_monitor_wait_seconds == 600
     assert config.max_pr_feedback_attempts == 3
+    assert config.max_pr_monitor_polls == 6
     assert config.pr_base_branch == ""
     assert config.pr_draft is False
+    assert config.pr_comment_ignore_authors == []
+
+
+def test_load_workspace_config_names_unknown_keys(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config = default_workspace_config("demo", str(repo), "Demo")
+    write_workspace_config(repo, config)
+    with (repo / ".bd-1.toml").open("a", encoding="utf-8") as handle:
+        handle.write('worktree_root_policy = "global"\n')
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        load_workspace_config(repo)
+
+    assert "worktree_root_policy" in str(exc.value)

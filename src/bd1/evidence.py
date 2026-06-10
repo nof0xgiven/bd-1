@@ -4,9 +4,12 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+
+from bd1.learning import LearningStore
 
 EXCLUDED_TREE_DIRS = frozenset({".git", ".sessions", ".venv", "node_modules", "__pycache__"})
+INCLUDED_LEARNING_STATUSES = frozenset({"active", "pending"})
+MAX_RELEVANT_LEARNINGS_BYTES = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -19,14 +22,20 @@ class EvidencePackage:
     extra_context: str = ""
 
 
-def collect_evidence(repo: str | Path, *, task: str, extra_context: str = "") -> EvidencePackage:
+def collect_evidence(
+    repo: str | Path,
+    *,
+    task: str,
+    extra_context: str = "",
+    learning_store: LearningStore | None = None,
+) -> EvidencePackage:
     root = Path(repo)
     return EvidencePackage(
         task=task,
         repo_path=str(root),
         repo_tree=_collect_repo_tree(root),
         workspace_artifacts=_collect_workspace_artifacts(root),
-        relevant_learnings=_collect_relevant_learnings(root),
+        relevant_learnings=_collect_relevant_learnings(root, learning_store),
         extra_context=extra_context,
     )
 
@@ -54,24 +63,36 @@ def _collect_workspace_artifacts(root: Path) -> str:
     return _join_file_sections(paths, root)
 
 
-def _collect_relevant_learnings(root: Path) -> str:
-    learning_roots = [
-        root / ".learning" / "learnings",
-    ]
+def _collect_relevant_learnings(root: Path, learning_store: LearningStore | None) -> str:
     sections: list[str] = []
-    seen: set[Path] = set()
-    for learning_root in learning_roots:
-        for path in _iter_files_with_suffix(learning_root, ".json"):
-            if path in seen:
+    if learning_store is not None:
+        for learning in learning_store.load_learnings():
+            if learning.status not in INCLUDED_LEARNING_STATUSES:
                 continue
-            seen.add(path)
-            sections.append(f"# {_relative_path(path, root)}\n{_read_json_for_context(path)}")
+            payload = json.dumps(learning.to_dict(), indent=2, sort_keys=True)
+            sections.append(f"# learning:{learning.id} (status={learning.status})\n{payload}")
     for path in _iter_files_with_suffix(root / ".artifacts" / "learning", ".md"):
-        if path in seen:
-            continue
-        seen.add(path)
         sections.append(f"# {_relative_path(path, root)}\n{_read_text(path)}")
-    return "\n\n".join(sections)
+    return _cap_sections(sections, MAX_RELEVANT_LEARNINGS_BYTES)
+
+
+def _cap_sections(sections: list[str], max_bytes: int) -> str:
+    included: list[str] = []
+    total = 0
+    omitted = 0
+    for section in sections:
+        size = len(section.encode("utf-8")) + 2
+        if total + size > max_bytes:
+            omitted += 1
+            continue
+        included.append(section)
+        total += size
+    if omitted:
+        included.append(
+            f"[truncated: relevant learnings exceeded {max_bytes} bytes; "
+            f"{omitted} section(s) omitted]"
+        )
+    return "\n\n".join(included)
 
 
 def _iter_files_with_suffix(root: Path, suffix: str) -> list[Path]:
@@ -88,15 +109,6 @@ def _iter_files_with_suffix(root: Path, suffix: str) -> list[Path]:
 def _join_file_sections(paths: list[Path], root: Path) -> str:
     sections = [f"# {_relative_path(path, root)}\n{_read_text(path)}" for path in paths]
     return "\n\n".join(sections)
-
-
-def _read_json_for_context(path: Path) -> str:
-    text = _read_text(path)
-    try:
-        data: Any = json.loads(text)
-    except json.JSONDecodeError:
-        return text
-    return json.dumps(data, indent=2, sort_keys=True)
 
 
 def _read_text(path: Path) -> str:

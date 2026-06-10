@@ -8,11 +8,19 @@ from typing import Any
 
 def load_pi_history(session_file: str | Path) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
-    for line in Path(session_file).read_text(encoding="utf-8").splitlines():
+    text = Path(session_file).read_text(encoding="utf-8", errors="replace")
+    for line_number, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
             continue
-        event = json.loads(line)
-        if event.get("type") != "message":
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            print(
+                f"Skipping malformed Pi session line {line_number}: {exc}",
+                file=sys.stderr,
+            )
+            continue
+        if not isinstance(event, dict) or event.get("type") != "message":
             continue
 
         message = event.get("message") or {}
@@ -74,9 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         entries = load_pi_history(args[0])
     except OSError as exc:
         print(str(exc), file=sys.stderr)
-        return 1
-    except json.JSONDecodeError as exc:
-        print(f"Invalid Pi session JSONL: {exc}", file=sys.stderr)
         return 1
 
     for entry in entries:

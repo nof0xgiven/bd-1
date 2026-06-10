@@ -32,16 +32,14 @@ def default_workspace_config(
         vet_model="flash",
         vet_confidence_threshold=0.8,
         dspy_model="openai/gpt-5-mini",
-        artifact_policy="curated",
-        dirty_base_policy="fail_fast",
-        require_clean_committed_attempt=True,
         dirty_exit_prompt="commit and resolve before exit",
-        worktree_root_policy="global",
         pr_command="gh",
         pr_monitor_wait_seconds=600,
         max_pr_feedback_attempts=3,
+        max_pr_monitor_polls=6,
         pr_base_branch="",
         pr_draft=False,
+        pr_comment_ignore_authors=[],
     )
 
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from enum import StrEnum
 from typing import Any
+
+from bd1.errors import WorkspaceConfigError
 
 
 class RunState(StrEnum):
@@ -15,7 +17,6 @@ class RunState(StrEnum):
     EXECUTION_RUNNING = "EXECUTION_RUNNING"
     EXECUTION_NEEDS_CLEAN_COMMIT = "EXECUTION_NEEDS_CLEAN_COMMIT"
     EXECUTION_COMMITTED = "EXECUTION_COMMITTED"
-    VET_RUNNING = "VET_RUNNING"
     VET_FAILED_WITH_FINDINGS = "VET_FAILED_WITH_FINDINGS"
     VET_PASSED = "VET_PASSED"
     REVIEW_RUNNING = "REVIEW_RUNNING"
@@ -26,9 +27,49 @@ class RunState(StrEnum):
     PR_MONITORING = "PR_MONITORING"
     PR_FEEDBACK_RECEIVED = "PR_FEEDBACK_RECEIVED"
     PR_READY = "PR_READY"
-    LEARNING_RUNNING = "LEARNING_RUNNING"
     COMPLETE = "COMPLETE"
     BLOCKED = "BLOCKED"
+
+
+ALLOWED_TRANSITIONS: dict[RunState, frozenset[RunState]] = {
+    RunState.TASK_RECEIVED: frozenset({RunState.BASE_VERIFIED, RunState.BLOCKED}),
+    RunState.BASE_VERIFIED: frozenset({RunState.WORKTREE_CREATED, RunState.BLOCKED}),
+    RunState.WORKTREE_CREATED: frozenset({RunState.DISCOVERY_COMPLETE, RunState.BLOCKED}),
+    RunState.DISCOVERY_COMPLETE: frozenset({RunState.PLAN_COMPLETE, RunState.BLOCKED}),
+    RunState.PLAN_COMPLETE: frozenset({RunState.EXECUTION_PROMPT_READY, RunState.BLOCKED}),
+    RunState.EXECUTION_PROMPT_READY: frozenset({RunState.EXECUTION_RUNNING, RunState.BLOCKED}),
+    RunState.EXECUTION_RUNNING: frozenset(
+        {
+            RunState.EXECUTION_NEEDS_CLEAN_COMMIT,
+            RunState.EXECUTION_COMMITTED,
+            RunState.BLOCKED,
+        }
+    ),
+    RunState.EXECUTION_NEEDS_CLEAN_COMMIT: frozenset(
+        {RunState.EXECUTION_COMMITTED, RunState.BLOCKED}
+    ),
+    RunState.EXECUTION_COMMITTED: frozenset(
+        {RunState.VET_FAILED_WITH_FINDINGS, RunState.VET_PASSED, RunState.BLOCKED}
+    ),
+    RunState.VET_FAILED_WITH_FINDINGS: frozenset(
+        {RunState.EXECUTION_PROMPT_READY, RunState.BLOCKED}
+    ),
+    RunState.VET_PASSED: frozenset({RunState.REVIEW_RUNNING, RunState.BLOCKED}),
+    RunState.REVIEW_RUNNING: frozenset(
+        {RunState.REVIEW_FAILED, RunState.REVIEW_PASSED, RunState.BLOCKED}
+    ),
+    RunState.REVIEW_FAILED: frozenset({RunState.EXECUTION_PROMPT_READY, RunState.BLOCKED}),
+    RunState.REVIEW_PASSED: frozenset({RunState.PR_PUBLISHING, RunState.BLOCKED}),
+    RunState.PR_PUBLISHING: frozenset({RunState.PR_CREATED, RunState.BLOCKED}),
+    RunState.PR_CREATED: frozenset({RunState.PR_MONITORING, RunState.BLOCKED}),
+    RunState.PR_MONITORING: frozenset(
+        {RunState.PR_FEEDBACK_RECEIVED, RunState.PR_READY, RunState.BLOCKED}
+    ),
+    RunState.PR_FEEDBACK_RECEIVED: frozenset({RunState.EXECUTION_PROMPT_READY, RunState.BLOCKED}),
+    RunState.PR_READY: frozenset({RunState.COMPLETE, RunState.BLOCKED}),
+    RunState.COMPLETE: frozenset(),
+    RunState.BLOCKED: frozenset(),
+}
 
 
 @dataclass(frozen=True)
@@ -46,30 +87,27 @@ class WorkspaceConfig:
     vet_model: str
     vet_confidence_threshold: float
     dspy_model: str
-    artifact_policy: str
-    dirty_base_policy: str
-    require_clean_committed_attempt: bool
     dirty_exit_prompt: str
-    worktree_root_policy: str
     pr_command: str = "gh"
     pr_monitor_wait_seconds: int = 600
     max_pr_feedback_attempts: int = 3
+    max_pr_monitor_polls: int = 6
     pr_base_branch: str = ""
     pr_draft: bool = False
+    pr_comment_ignore_authors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> WorkspaceConfig:
-        defaults = {
-            "pr_command": "gh",
-            "pr_monitor_wait_seconds": 600,
-            "max_pr_feedback_attempts": 3,
-            "pr_base_branch": "",
-            "pr_draft": False,
-        }
-        return cls(**{**defaults, **data})
+        known_keys = {item.name for item in fields(cls)}
+        unknown_keys = sorted(set(data) - known_keys)
+        if unknown_keys:
+            raise WorkspaceConfigError(
+                f"Unknown workspace config key(s): {', '.join(unknown_keys)}"
+            )
+        return cls(**data)
 
 
 @dataclass(frozen=True)

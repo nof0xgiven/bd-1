@@ -6,6 +6,7 @@ from bd1.subprocesses import CommandResult
 
 def fake_pi_runner(*, writes_session: bool = True, exit_code: int = 0):
     def runner(command, cwd, env=None, timeout=None):
+        assert "--session-dir" in command, f"--session-dir missing from pi command: {command}"
         session_dir = Path(command[command.index("--session-dir") + 1])
         if writes_session:
             session_dir.mkdir(parents=True, exist_ok=True)

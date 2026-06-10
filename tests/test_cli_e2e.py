@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.fakes import hermetic_git_env
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -17,6 +19,7 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
         check=True,
         capture_output=True,
         text=True,
+        env=hermetic_git_env(),
     )
     _git(repo, ["remote", "add", "origin", str(remote)])
     _git(repo, ["push", "-u", "origin", "main"])
@@ -53,16 +56,24 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     config_path = repo / ".bd-1.toml"
     text = config_path.read_text(encoding="utf-8")
     text = text.replace("pr_monitor_wait_seconds = 600", "pr_monitor_wait_seconds = 0")
+    text = text.replace("max_pr_monitor_polls = 6", "max_pr_monitor_polls = 1")
     text = text.replace('pi_command = "pi"', 'pi_command = "custom-pi"')
     text = text.replace('vet_command = "vet"', 'vet_command = "custom-vet"')
     text = text.replace('pr_command = "gh"', 'pr_command = "custom-gh"')
+    # Guard against silent no-op replaces if defaults drift: a missed rewrite
+    # would point the run at real commands or a 600s monitor wait.
+    assert "pr_monitor_wait_seconds = 0" in text
+    assert "max_pr_monitor_polls = 1" in text
+    assert 'pi_command = "custom-pi"' in text
+    assert 'vet_command = "custom-vet"' in text
+    assert 'pr_command = "custom-gh"' in text
     config_path.write_text(text, encoding="utf-8")
 
     status_before_commit = _git(repo, ["status", "--short", "--untracked-files=all"]).stdout
     assert ".bd-1.toml" in status_before_commit
     assert ".artifacts/product.md" in status_before_commit
 
-    _git(repo, ["add", ".bd-1.toml", ".artifacts", ".learning", ".examples"])
+    _git(repo, ["add", ".bd-1.toml", ".artifacts"])
     _git(repo, ["commit", "-m", "add bd-1 workspace artifacts"])
 
     run_result = _run_cli(["run", "Make a fixture change"], cwd=repo, env=env)
@@ -84,6 +95,9 @@ def test_cli_e2e_with_fake_pi_and_vet(tmp_path, init_git_repo):
     assert Path(run_record["attempts"][0]["review_path"]).exists()
     assert Path(run_record["artifacts"]["completed"]).exists()
     assert list((worktree / ".artifacts" / "learning").glob(f"{run_output['run_id']}-*.md"))
+    learning_store_root = tmp_path / "state" / "learning" / "demo"
+    assert list((learning_store_root / "learnings").glob("*.json"))
+    assert (learning_store_root / "learning.jsonl").exists()
     assert run_record["pr_number"] == 77
     assert run_record["pr_url"] == "https://github.com/acme/demo/pull/77"
     assert run_record["pr_complete_path"].endswith(
@@ -112,7 +126,7 @@ def _assert_project_runtime_ignores() -> None:
 
 
 def _cli_env(state_dir: Path, fake_bin: Path) -> dict[str, str]:
-    env = os.environ.copy()
+    env = hermetic_git_env()
     env["BD1_HOME"] = str(state_dir)
     env["BD1_REASONING"] = "template"
     env["PATH"] = f"{fake_bin}{os.pathsep}{env['PATH']}"
@@ -144,6 +158,7 @@ def _git(repo: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         check=True,
+        env=hermetic_git_env(),
     )
 
 
@@ -154,6 +169,7 @@ def _git_check_ignore(repo: Path, path: str) -> bool:
         capture_output=True,
         text=True,
         check=False,
+        env=hermetic_git_env(),
     )
     return result.returncode == 0
 
@@ -168,6 +184,7 @@ def _write_fake_pi(path: Path) -> None:
         f"""#!{sys.executable}
 import argparse
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -201,10 +218,11 @@ session_dir.mkdir(parents=True, exist_ok=True)
 )
 
 Path("fixture-change.txt").write_text("changed by fake pi\\n", encoding="utf-8")
-subprocess.run(["git", "config", "user.email", "test@example.com"], check=True)
-subprocess.run(["git", "config", "user.name", "Test User"], check=True)
-subprocess.run(["git", "add", "fixture-change.txt"], check=True)
-subprocess.run(["git", "commit", "-m", "fake pi fixture change"], check=True)
+git_env = {{**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}}
+subprocess.run(["git", "config", "user.email", "test@example.com"], check=True, env=git_env)
+subprocess.run(["git", "config", "user.name", "Test User"], check=True, env=git_env)
+subprocess.run(["git", "add", "fixture-change.txt"], check=True, env=git_env)
+subprocess.run(["git", "commit", "-m", "fake pi fixture change"], check=True, env=git_env)
 print("fake pi complete")
 """,
         encoding="utf-8",
@@ -275,9 +293,29 @@ elif args[:2] == ["pr", "create"]:
 elif args[:2] == ["pr", "edit"]:
     print("")
 elif args[:2] == ["pr", "view"]:
-    print(json.dumps({{"number": 77, "url": "https://github.com/acme/demo/pull/77", "state": "OPEN", "mergeable": "MERGEABLE", "reviewDecision": "", "reviews": []}}))
+    # Review history includes a superseded CHANGES_REQUESTED review followed by an
+    # approval from the same reviewer; only reviewDecision reflects the live state.
+    reviews = [
+        {{
+            "id": "R_old",
+            "state": "CHANGES_REQUESTED",
+            "body": "Please rename this helper.",
+            "author": {{"login": "coderabbitai"}},
+            "submittedAt": "2026-06-09T00:00:00Z",
+        }},
+        {{
+            "id": "R_new",
+            "state": "APPROVED",
+            "body": "",
+            "author": {{"login": "coderabbitai"}},
+            "submittedAt": "2026-06-09T01:00:00Z",
+        }},
+    ]
+    print(json.dumps({{"number": 77, "url": "https://github.com/acme/demo/pull/77", "state": "OPEN", "mergeable": "MERGEABLE", "reviewDecision": "APPROVED", "reviews": reviews}}))
 elif args[:2] == ["pr", "checks"]:
-    print(json.dumps([{{"name": "tests", "bucket": "pass", "state": "SUCCESS", "link": "", "description": ""}}]))
+    # Real gh behavior for a repo without CI: exit 1, empty stdout, stderr note.
+    print("no checks reported on the 'bd-1/run' branch", file=sys.stderr)
+    raise SystemExit(1)
 elif args and args[0] == "api":
     print("[]")
 else:

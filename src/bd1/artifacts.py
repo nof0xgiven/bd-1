@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +16,6 @@ WORKSPACE_DIRS = [
     ".artifacts/pr",
     ".artifacts/blockers",
     ".artifacts/learning",
-    ".learning/learnings",
-    ".examples",
     ".sessions",
 ]
 
@@ -29,7 +29,17 @@ _KEY_VALUE_UNQUOTED_RE = re.compile(
     r"(?i)(?P<prefix>\b(?P<key>[a-z0-9_-]+)\b[\"']?\s*[:=]\s*)"
     r"(?![\"'])(?P<value>[^\s,}\]]+)"
 )
-_BEARER_RE = re.compile(r"(?i)(authorization\s*:\s*bearer\s+)([^\s\"']+)")
+# Redacts everything after "authorization:" (scheme and credential), in both
+# header form (Authorization: Basic abc) and quoted form ("Authorization": "token abc").
+_AUTHORIZATION_RE = re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?)([^\r\n\"']+)")
+# Standalone credential shapes that should never survive redaction.
+_TOKEN_SHAPES_RE = re.compile(
+    r"\bgithub_pat_[A-Za-z0-9_]{20,}"
+    r"|\bghp_[A-Za-z0-9]{20,}"
+    r"|\bsk-[A-Za-z0-9_-]{20,}"
+    r"|\bAKIA[A-Z0-9]{16}\b"
+    r"|\bxox[a-z]-[A-Za-z0-9-]{10,}"
+)
 _DATABASE_URL_RE = re.compile(
     r"(?i)\b(?:postgres(?:ql)?|mysql|mariadb|mongodb(?:\+srv)?|redis|rediss)"
     r"://[^\s\"']+"
@@ -113,7 +123,8 @@ def ensure_global_dirs(root: str | Path) -> None:
 
 def redact_text(text: str) -> str:
     redacted = _DATABASE_URL_RE.sub("[REDACTED]", text)
-    redacted = _BEARER_RE.sub(r"\1[REDACTED]", redacted)
+    redacted = _TOKEN_SHAPES_RE.sub("[REDACTED]", redacted)
+    redacted = _AUTHORIZATION_RE.sub(r"\1[REDACTED]", redacted)
     redacted = _KEY_VALUE_QUOTED_RE.sub(_redact_key_value, redacted)
     return _KEY_VALUE_UNQUOTED_RE.sub(_redact_key_value, redacted)
 
@@ -121,7 +132,17 @@ def redact_text(text: str) -> str:
 def write_text(path: str | Path, text: str, *, redact: bool = True) -> Path:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(redact_text(text) if redact else text, encoding="utf-8")
+    payload = redact_text(text) if redact else text
+    descriptor, temp_name = tempfile.mkstemp(
+        dir=target.parent, prefix=f".{target.name}.", suffix=".tmp"
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+        os.replace(temp_name, target)
+    except BaseException:
+        Path(temp_name).unlink(missing_ok=True)
+        raise
     return target
 
 

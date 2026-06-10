@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -10,16 +11,25 @@ from bd1.dspy_programs import DiscoveryOutput, LearningOutput, PlanOutput, Revie
 from bd1.pi import PiResult
 from bd1.pr import PrCheck, PrPublication, PrResult
 from bd1.subprocesses import CommandResult
-from bd1.vet import VetResult
+from bd1.vet import VetResult, _outcome_for_exit_code
+
+
+def hermetic_git_env() -> dict[str, str]:
+    """Environment that shields git from the developer's global/system config."""
+    return {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_NOSYSTEM": "1"}
 
 
 class FakeReasoning:
     def __init__(self, review_verdicts: list[str] | None = None) -> None:
         self.review_verdicts = review_verdicts or ["PASS"]
         self.review_calls = 0
+        self.review_inputs: list[dict] = []
         self.learn_events: list[str] = []
+        self.learn_calls: list[dict] = []
+        self.discover_evidence: list = []
 
     def discover(self, evidence) -> DiscoveryOutput:
+        self.discover_evidence.append(evidence)
         return DiscoveryOutput(markdown=f"# Discovery\n\nTask: {evidence.task}\n")
 
     def plan(self, evidence, *, discovery_context: str) -> PlanOutput:
@@ -39,6 +49,13 @@ class FakeReasoning:
     ) -> ReviewOutput:
         verdict = self.review_verdicts[min(self.review_calls, len(self.review_verdicts) - 1)]
         self.review_calls += 1
+        self.review_inputs.append(
+            {
+                "task": task,
+                "pi_completion_summary": pi_completion_summary,
+                "command_output_summary": command_output_summary,
+            }
+        )
         return ReviewOutput(verdict=verdict, markdown=f"# Review\n\nVerdict: {verdict}\n")
 
     def learn(
@@ -50,12 +67,32 @@ class FakeReasoning:
         pr_feedback: str = "",
     ) -> LearningOutput:
         self.learn_events.append(review_markdown)
-        return LearningOutput(markdown=f"# Learning\n\n{review_markdown}\n")
+        self.learn_calls.append(
+            {
+                "review_markdown": review_markdown,
+                "final_diff": final_diff,
+                "pr_feedback": pr_feedback,
+            }
+        )
+        return LearningOutput(
+            markdown=f"# Learning\n\n{review_markdown}\n",
+            learnings=[
+                {
+                    "rule": f"Fake learning from task: {evidence.task}",
+                    "category": "testing_pattern",
+                    "applies_when": "Running similar tasks.",
+                    "rationale": review_markdown,
+                    "confidence": 0.9,
+                    "tags": ["fake"],
+                }
+            ],
+        )
 
 
 @dataclass
 class FakePiBehavior:
     create_session: bool = True
+    make_changes: bool = True
     commit: bool = True
     dirty: bool = False
     exit_code: int = 0
@@ -112,24 +149,33 @@ class FakePiRunner:
                 encoding="utf-8",
             )
 
-        changed = worktree_path / "change.txt"
-        with changed.open("a", encoding="utf-8") as handle:
-            handle.write(f"{prompt}\n")
-        if behavior.commit:
-            subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
-            subprocess.run(
-                ["git", "commit", "-m", f"fake pi {index}"],
-                cwd=worktree_path,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
+        if behavior.make_changes:
+            changed = worktree_path / "change.txt"
+            with changed.open("a", encoding="utf-8") as handle:
+                handle.write(f"{prompt}\n")
+            if behavior.commit:
+                git_env = hermetic_git_env()
+                subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True, env=git_env)
+                subprocess.run(
+                    ["git", "commit", "-m", f"fake pi {index}"],
+                    cwd=worktree_path,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    env=git_env,
+                )
         if behavior.dirty:
             (worktree_path / "dirty.txt").write_text("dirty\n", encoding="utf-8")
 
+        exit_code = behavior.exit_code
+        if session_file is None and exit_code == 0:
+            # Mirror the real PiRunner: a missing session file coerces a zero
+            # exit code to 2 so it can never be mistaken for success.
+            exit_code = 2
+
         return PiResult(
             command=["fake-pi"],
-            exit_code=behavior.exit_code,
+            exit_code=exit_code,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
             session_file=session_file,
@@ -153,6 +199,7 @@ class FakeVetRunner:
     def __init__(self, exit_codes: list[int] | None = None) -> None:
         self.exit_codes = exit_codes or [0]
         self.calls = 0
+        self.history_loader_commands: list[str] = []
 
     def run(
         self,
@@ -167,6 +214,7 @@ class FakeVetRunner:
     ) -> VetResult:
         exit_code = self.exit_codes[min(self.calls, len(self.exit_codes) - 1)]
         self.calls += 1
+        self.history_loader_commands.append(history_loader_command)
         artifact_path = Path(artifact_dir)
         output_path = artifact_path / "vet-output.json"
         payload = (
@@ -178,9 +226,7 @@ class FakeVetRunner:
         output_path.write_text(json.dumps(payload), encoding="utf-8")
         stdout_path = write_text(artifact_path / "vet-stdout.txt", "vet stdout")
         stderr_path = write_text(artifact_path / "vet-stderr.txt", "vet stderr")
-        outcome = {0: "PASS", 10: "FINDINGS", 1: "RUNTIME_ERROR", 2: "CONFIG_ERROR"}.get(
-            exit_code, "ERROR"
-        )
+        outcome = _outcome_for_exit_code(exit_code)
         summary = "goal_mismatch: Wrong goal" if exit_code == 10 else "vet stderr"
         return VetResult(
             command=["fake-vet"],

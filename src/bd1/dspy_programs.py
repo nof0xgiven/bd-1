@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import dspy
 
+from bd1.errors import ReasoningOutputError
 from bd1.evidence import EvidencePackage
 
 
@@ -58,11 +60,10 @@ class DecideReviewOutcome(dspy.Signature):
     vet_interpretation: str = dspy.InputField()
     workspace_artifacts: str = dspy.InputField()
 
-    verdict: str = dspy.OutputField(desc="PASS | REVISE | FAIL")
+    verdict: str = dspy.OutputField(desc="PASS | FAIL")
     p1_critical: list[str] = dspy.OutputField()
     p2_major: list[str] = dspy.OutputField()
     p3_minor: list[str] = dspy.OutputField()
-    revision_prompt: str = dspy.OutputField()
     review_markdown: str = dspy.OutputField()
 
 
@@ -89,19 +90,33 @@ class PlanOutput:
     markdown: str
 
 
+def normalize_review_verdict(raw: str) -> str:
+    """Binary verdict: token-match PASS or FAIL; anything unparseable fails closed."""
+    for token in re.findall(r"[A-Za-z]+", str(raw)):
+        upper = token.upper()
+        if upper in ("PASS", "FAIL"):
+            return upper
+    return "FAIL"
+
+
 @dataclass(frozen=True)
 class ReviewOutput:
     verdict: str
     markdown: str
+    raw_verdict: str = ""
 
     def __post_init__(self) -> None:
-        verdict = "PASS" if str(self.verdict).strip().upper() == "PASS" else "FAIL"
-        object.__setattr__(self, "verdict", verdict)
+        raw = str(self.verdict)
+        if not self.raw_verdict:
+            object.__setattr__(self, "raw_verdict", raw)
+        object.__setattr__(self, "verdict", normalize_review_verdict(raw))
 
 
 @dataclass(frozen=True)
 class LearningOutput:
     markdown: str
+    learnings: list[dict[str, Any]] = field(default_factory=list)
+    examples: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ReasoningPrograms(Protocol):
@@ -193,7 +208,19 @@ class TemplateReasoningPrograms:
                 f"## Review\n{review_markdown}",
             ]
         )
-        return LearningOutput(markdown=markdown)
+        return LearningOutput(
+            markdown=markdown,
+            learnings=[
+                {
+                    "rule": f"Template learning for task: {evidence.task}",
+                    "category": "process",
+                    "applies_when": "Running similar tasks in this workspace.",
+                    "rationale": review_markdown,
+                    "confidence": 0.5,
+                    "tags": ["template"],
+                }
+            ],
+        )
 
 
 class DiscoveryProgram(dspy.Module):
@@ -306,7 +333,8 @@ class DspyReasoningPrograms:
             relevant_learnings=evidence.relevant_learnings,
             external_examples=evidence.extra_context,
         )
-        return DiscoveryOutput(markdown=str(prediction.context_package_markdown))
+        markdown = _required_markdown(prediction, "context_package_markdown", "Discovery")
+        return DiscoveryOutput(markdown=markdown)
 
     def plan(self, evidence: EvidencePackage, *, discovery_context: str) -> PlanOutput:
         prediction = self._planner(
@@ -315,7 +343,7 @@ class DspyReasoningPrograms:
             workspace_rules=evidence.workspace_artifacts,
             relevant_learnings=evidence.relevant_learnings,
         )
-        return PlanOutput(markdown=str(prediction.plan_markdown))
+        return PlanOutput(markdown=_required_markdown(prediction, "plan_markdown", "Planning"))
 
     def review(
         self,
@@ -339,7 +367,8 @@ class DspyReasoningPrograms:
             workspace_artifacts=workspace_artifacts,
         )
         return ReviewOutput(
-            verdict=str(prediction.verdict), markdown=str(prediction.review_markdown)
+            verdict=_text_or_default(prediction, "verdict"),
+            markdown=_required_markdown(prediction, "review_markdown", "Review"),
         )
 
     def learn(
@@ -356,7 +385,11 @@ class DspyReasoningPrograms:
             pr_feedback=pr_feedback,
             review_history=review_markdown,
         )
-        return LearningOutput(markdown=_format_learning_prediction(prediction))
+        return LearningOutput(
+            markdown=_format_learning_prediction(prediction),
+            learnings=_list_or_default(prediction, "learnings"),
+            examples=_list_or_default(prediction, "examples"),
+        )
 
 
 def _format_coder_summary(discovery_context: str, pi_completion_summary: str) -> str:
@@ -368,13 +401,31 @@ def _format_coder_summary(discovery_context: str, pi_completion_summary: str) ->
     )
 
 
+def _text_or_default(prediction: Any, name: str) -> str:
+    """Safe text extraction: missing or None attributes become "" not "None"."""
+    value = getattr(prediction, name, "")
+    return "" if value is None else str(value)
+
+
+def _required_markdown(prediction: Any, name: str, program: str) -> str:
+    text = _text_or_default(prediction, name)
+    if not text.strip():
+        raise ReasoningOutputError(f"{program} program returned empty {name}.")
+    return text
+
+
+def _list_or_default(prediction: Any, name: str) -> list[Any]:
+    value = getattr(prediction, name, None)
+    return value if isinstance(value, list) else []
+
+
 def _format_learning_prediction(prediction: Any) -> str:
     payload = {
-        "learnings": getattr(prediction, "learnings", []),
-        "examples": getattr(prediction, "examples", []),
-        "rejected_observations": getattr(prediction, "rejected_observations", []),
+        "learnings": _list_or_default(prediction, "learnings"),
+        "examples": _list_or_default(prediction, "examples"),
+        "rejected_observations": _list_or_default(prediction, "rejected_observations"),
     }
-    return json.dumps(payload, indent=2, sort_keys=True)
+    return json.dumps(payload, indent=2, sort_keys=True, default=str)
 
 
 def _format_context_package(evidence: EvidencePackage) -> str:
