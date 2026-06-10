@@ -19,9 +19,11 @@ class DiscoverTaskContext(dspy.Signature):
     You are a discovery agent. Your output is the coding agent's entire world:
     it must enable a correct implementation on the first attempt. Do not assume —
     if you cannot prove a claim from the repository evidence, label it explicitly
-    as an ambiguity in the context package. Find a source of truth for the change:
-    either an existing reference implementation in this repository or a proven
-    external example, and cite it. Prefer minimal-but-sufficient inclusion:
+    as an ambiguity under 'Potential Gotchas'. Find a source of truth for the
+    change: an existing reference implementation in this repository, or an
+    example from the external_examples input if one is provided. If neither
+    exists, record under 'Potential Gotchas' that no source of truth was found —
+    never invent a citation. Prefer minimal-but-sufficient inclusion:
     everything the coding agent needs, nothing irrelevant. For every file excerpt
     include the file path; for files to read, explain why each matters. Surface
     concrete gotchas tied to this repository, constraints discovered from the
@@ -43,7 +45,26 @@ class DiscoverTaskContext(dspy.Signature):
     files_to_modify: list[dict[str, Any]] = dspy.OutputField()
     constraints: list[str] = dspy.OutputField()
     risks: list[str] = dspy.OutputField()
-    context_package_markdown: str = dspy.OutputField()
+    context_package_markdown: str = dspy.OutputField(
+        desc=(
+            "Complete markdown context package with EXACTLY these sections: "
+            "'# Context Package: <short task title>', "
+            "'## Task Understanding' (2-3 sentences, type, scope, complexity), "
+            "'## Source of Truth' (an existing reference implementation in this "
+            "repo, or an example from the external_examples input if one is "
+            "provided; if neither exists, say so here and under '## Potential "
+            "Gotchas' — never invent a citation), "
+            "'## Architecture Overview' (relevant modules and data flow), "
+            "'## Files to Read' (table: file, lines, why), "
+            "'## Files to Create or Modify' (table: action, file, description), "
+            "'## Patterns to Follow' (concrete excerpts with file paths), "
+            "'## Constraints and Requirements', "
+            "'## Potential Gotchas' (repo-specific pitfalls AND unresolved "
+            "ambiguities, clearly labeled), "
+            "'## How to Validate' (commands/checks the coder can run), "
+            "'## Implementation Hints' (sequence and integration points, no full code)."
+        )
+    )
 
 
 class CreateImplementationPlan(dspy.Signature):
@@ -73,7 +94,22 @@ class CreateImplementationPlan(dspy.Signature):
     file_by_file_impact: list[dict[str, Any]] = dspy.OutputField()
     implementation_order: list[str] = dspy.OutputField()
     acceptance_criteria: list[str] = dspy.OutputField()
-    plan_markdown: str = dspy.OutputField()
+    plan_markdown: str = dspy.OutputField(
+        desc=(
+            "Complete markdown implementation plan with EXACTLY these sections: "
+            "'# Implementation Plan: <title>', "
+            "'## Summary', "
+            "'## Acceptance Criteria' (verifiable conditions that define done), "
+            "'## Current-State Analysis', "
+            "'## Design', "
+            "'## File-by-File Impact' (table: file, change, why, ordering "
+            "constraints), "
+            "'## Trade-offs and Alternatives', "
+            "'## Risks', "
+            "'## Implementation Order' (numbered steps, each independently "
+            "verifiable)."
+        )
+    )
 
 
 class DecideReviewOutcome(dspy.Signature):
