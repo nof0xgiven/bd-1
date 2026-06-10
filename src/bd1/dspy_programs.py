@@ -475,6 +475,18 @@ def build_discovery_react(repo_root: str, max_iters: int, extra_tools: Sequence[
     )
 
 
+def _ensure_no_running_event_loop() -> None:
+    """Raise RuntimeError if called from inside a running event loop."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    raise RuntimeError(
+        "asyncio.run() cannot be called from a running event loop; "
+        "MCP-backed discovery requires a synchronous calling context"
+    )
+
+
 class DspyReasoningPrograms:
     def __init__(
         self,
@@ -507,9 +519,12 @@ class DspyReasoningPrograms:
         )
         try:
             if self._discovery_mcp_servers:
-                # asyncio.run raises RuntimeError when a loop is already
-                # running (embedding scenarios); that lands in the except
-                # below and degrades to the single-shot fallback.
+                # asyncio.run cannot be used while a loop is already running
+                # (embedding scenarios). Detect that BEFORE constructing the
+                # coroutine — handing an unrunnable coroutine to asyncio.run
+                # leaks a "never awaited" RuntimeWarning. The raise lands in
+                # the except below and degrades to the single-shot fallback.
+                _ensure_no_running_event_loop()
                 prediction = asyncio.run(self._discover_async(evidence.repo_path, inputs))
             else:
                 react = self._discovery_react_factory(evidence.repo_path, self._discovery_max_iters)

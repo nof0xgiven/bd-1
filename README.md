@@ -109,6 +109,8 @@ discovery_mcp_servers = ["npx -y exa-mcp-server", "npx -y @upstash/context7-mcp"
 - **Context7** (library docs) works keyless.
 - Both require Node (`npx`).
 
+The configured server commands are executed with your privileges — the same trust level as `setup_script` and `pi_command` — so only list servers you trust.
+
 Failures degrade gracefully: a server that fails to start (or hangs past a 20s startup timeout) is skipped with a stderr warning, and discovery continues with the repo tools.
 
 ## Inspect runs

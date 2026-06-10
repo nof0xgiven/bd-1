@@ -531,6 +531,35 @@ def test_discover_with_all_mcp_servers_failing_still_runs_repo_only_react(tmp_pa
     assert "single-shot fallback" not in stderr
 
 
+def test_discover_with_mcp_servers_inside_running_loop_falls_back_without_warning(
+    tmp_path, capsys, recwarn
+):
+    # Embedding scenarios: discover() called from inside a running event loop
+    # cannot use asyncio.run. It must fall back to single-shot discovery
+    # without leaking an unawaited _discover_async coroutine (RuntimeWarning).
+    import asyncio
+    import gc
+
+    fallback = _RecordingFallback()
+    programs = DspyReasoningPrograms(
+        discovery=fallback,
+        discovery_react_factory=lambda root, max_iters, extra_tools=(): _ExplodingReact(),
+        discovery_mcp_servers=["definitely-not-a-real-binary-xyz"],
+    )
+
+    async def call_from_running_loop():
+        return programs.discover(_react_evidence(tmp_path))
+
+    output = asyncio.run(call_from_running_loop())
+    gc.collect()  # force collection so any unawaited coroutine warns now
+
+    assert "single-shot fallback" in output.markdown.lower()
+    assert len(fallback.calls) == 1
+    assert "tool-using discovery failed" in capsys.readouterr().err
+    runtime_warnings = [w for w in recwarn.list if issubclass(w.category, RuntimeWarning)]
+    assert runtime_warnings == []
+
+
 def test_discover_with_mcp_servers_falls_back_when_react_itself_fails(tmp_path, capsys):
     fallback = _RecordingFallback()
     programs = DspyReasoningPrograms(
