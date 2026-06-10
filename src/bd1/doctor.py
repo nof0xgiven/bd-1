@@ -46,11 +46,16 @@ def run_checks(
         result.name == f"binary:{gh_binary}" and result.ok for result in results
     )
     if gh_present and runner is not None:
-        version = runner([gh_binary, "--version"], cwd=".", timeout=30)
-        ok = version.exit_code == 0 and gh_version_ok(version.stdout)
-        results.append(
-            CheckResult("gh:version", ok, version.stdout.splitlines()[0] if version.stdout else "")
-        )
+        # A diagnostic tool should always finish its diagnosis: a broken gh
+        # binary becomes a failed check, never an aborted run.
+        try:
+            version = runner([gh_binary, "--version"], cwd=".", timeout=30)
+        except Exception as exc:
+            results.append(CheckResult("gh:version", False, str(exc)))
+        else:
+            ok = version.exit_code == 0 and gh_version_ok(version.stdout)
+            output = version.stdout or version.stderr
+            results.append(CheckResult("gh:version", ok, output.splitlines()[0] if output else ""))
     results.append(
         CheckResult(
             "dspy_model",
