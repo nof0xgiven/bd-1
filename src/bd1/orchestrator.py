@@ -609,7 +609,9 @@ class Orchestrator:
             pr_state = pr_result.state.upper()
             if pr_state == "MERGED":
                 record = self._transition(worktree, record, RunState.PR_READY, "PR merged")
-                record = replace(record, final_verdict="PASS")
+                # Stamp the merge-sync marker so `bd-1 sync` never re-learns a
+                # merge the orchestrator already recorded learning for.
+                record = replace(record, final_verdict="PASS", merge_synced_at=now_iso())
                 self.run_store.write(worktree, record)
                 self._safe_record_learning(
                     worktree,

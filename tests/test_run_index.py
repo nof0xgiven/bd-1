@@ -183,6 +183,129 @@ def test_archive_copies_record_and_transitions(tmp_path):
     assert store.read(archived_path) == record
 
 
+def _learning_attempt(
+    diff_path: str,
+    review_path: str,
+    session_file: str = "",
+    stdout_path: str = "",
+    stderr_path: str = "",
+    vet_output_path: str = "",
+) -> AttemptRecord:
+    return AttemptRecord(
+        number=1,
+        pi_session_id="s",
+        pi_session_file=session_file or "f",
+        pi_stdout_path=stdout_path or "o",
+        pi_stderr_path=stderr_path or "e",
+        git_diff_path=diff_path,
+        commit_sha="abc",
+        vet_command="vet",
+        vet_exit_code=0,
+        vet_output_path=vet_output_path or "v",
+        review_path=review_path,
+        review_verdict="PASS",
+        state_transition_reason="reason",
+    )
+
+
+def test_archive_copies_learning_inputs(tmp_path):
+    worktree = tmp_path / "wt"
+    session_dir = worktree / ".sessions" / "run-1"
+    session_dir.mkdir(parents=True)
+    diff_path = worktree / "diff.patch"
+    diff_path.write_text("diff text", encoding="utf-8")
+    review_path = worktree / "review.md"
+    review_path.write_text("review text", encoding="utf-8")
+    session_file = worktree / "session.jsonl"
+    session_file.write_text('{"role":"user"}\n', encoding="utf-8")
+    stdout_path = worktree / "pi-out.txt"
+    stdout_path.write_text("out", encoding="utf-8")
+    stderr_path = worktree / "pi-err.txt"
+    stderr_path.write_text("err", encoding="utf-8")
+    vet_out = worktree / "vet.json"
+    vet_out.write_text("{}", encoding="utf-8")
+    feedback_path = worktree / "pr-feedback.md"
+    feedback_path.write_text("feedback", encoding="utf-8")
+    discovery = worktree / "discovery.md"
+    discovery.write_text("ctx", encoding="utf-8")
+    plan = worktree / "plan.md"
+    plan.write_text("plan", encoding="utf-8")
+    completed = worktree / "completed.md"
+    completed.write_text("done", encoding="utf-8")
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="t",
+        base_commit="abc",
+        branch="bd-1/run-1",
+        worktree=str(worktree),
+        state=RunState.COMPLETE,
+        created_at="2026-06-10T00:00:00Z",
+        updated_at="2026-06-10T00:00:00Z",
+        attempts=[
+            _learning_attempt(
+                str(diff_path),
+                str(review_path),
+                str(session_file),
+                str(stdout_path),
+                str(stderr_path),
+                str(vet_out),
+            )
+        ],
+        pr_number=7,
+        pr_feedback_paths=[str(feedback_path)],
+        artifacts={
+            "discovery_context": str(discovery),
+            "plan": str(plan),
+            "completed": str(completed),
+        },
+    )
+    (session_dir / "run-record.json").write_text(json.dumps(record.to_dict()), encoding="utf-8")
+    run_store = RunStore(tmp_path / "state")
+
+    run_store.archive(record)
+
+    archive = run_store.archive_dir(record.run_id)
+    assert (archive / "final-diff.patch").read_text(encoding="utf-8") == "diff text"
+    assert (archive / "review.md").read_text(encoding="utf-8") == "review text"
+    assert (archive / "pi-session.jsonl").exists()
+    assert (archive / "pi-stdout.txt").exists()
+    assert (archive / "pi-stderr.txt").exists()
+    assert (archive / "vet-output.json").exists()
+    assert (archive / "discovery-context.md").read_text(encoding="utf-8") == "ctx"
+    assert (archive / "plan.md").exists()
+    assert (archive / "completed.md").exists()
+    assert (archive / "pr-feedback-001.md").exists()
+
+
+def test_archive_skips_relative_or_missing_learning_inputs(tmp_path):
+    worktree = tmp_path / "wt"
+    session_dir = worktree / ".sessions" / "run-1"
+    session_dir.mkdir(parents=True)
+    missing = worktree / "gone.patch"
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="t",
+        base_commit="abc",
+        branch="bd-1/run-1",
+        worktree=str(worktree),
+        state=RunState.COMPLETE,
+        created_at="2026-06-10T00:00:00Z",
+        updated_at="2026-06-10T00:00:00Z",
+        attempts=[_learning_attempt(str(missing), "relative/review.md")],
+    )
+    (session_dir / "run-record.json").write_text(json.dumps(record.to_dict()), encoding="utf-8")
+    run_store = RunStore(tmp_path / "state")
+
+    run_store.archive(record)
+
+    archive = run_store.archive_dir(record.run_id)
+    assert not (archive / "final-diff.patch").exists()
+    assert not (archive / "review.md").exists()
+    assert not (archive / "pi-session.jsonl").exists()
+
+
 def test_rebuild_tolerates_missing_sessions_dir(tmp_path):
     index = RunIndex(tmp_path / "runs.db")
 

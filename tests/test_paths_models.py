@@ -176,6 +176,28 @@ def test_run_record_preserves_pr_metadata_fields():
     assert restored == record
 
 
+def test_run_record_round_trips_merge_synced_at():
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="abc123",
+        branch="bd-1/run-1",
+        worktree="/tmp/worktree",
+        state=RunState.COMPLETE,
+        created_at="2026-06-10T00:00:00Z",
+        updated_at="2026-06-10T00:00:01Z",
+        merge_synced_at="2026-06-10T12:00:00Z",
+    )
+
+    assert RunRecord.from_dict(record.to_dict()).merge_synced_at == "2026-06-10T12:00:00Z"
+    assert RunRecord.from_dict({**record.to_dict(), "merge_synced_at": ""}).merge_synced_at == ""
+    # backward compat: old records lack the key entirely
+    data = record.to_dict()
+    data.pop("merge_synced_at")
+    assert RunRecord.from_dict(data).merge_synced_at == ""
+
+
 def test_run_record_loads_existing_files_without_pr_fields():
     record = RunRecord.from_dict(
         {

@@ -682,6 +682,13 @@ def test_pr_merged_completes_run_and_records_pr_merged_learning(tmp_path, init_g
 
     assert record.state is RunState.COMPLETE
     assert record.final_verdict == "PASS"
+    assert record.merge_synced_at != ""
+    persisted = json.loads(
+        (Path(record.worktree) / ".sessions" / record.run_id / "run-record.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert persisted["merge_synced_at"] == record.merge_synced_at
     assert any(event.startswith("pr merged") for event in reasoning.learn_events)
     transitions = (
         Path(record.worktree) / ".sessions" / record.run_id / "transitions.jsonl"

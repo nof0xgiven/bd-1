@@ -168,6 +168,7 @@ class RunRecord:
     pr_feedback_paths: list[str] = field(default_factory=list)
     pr_complete_path: str = ""
     pr_seen_feedback_keys: list[str] = field(default_factory=list)
+    merge_synced_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -197,6 +198,7 @@ class RunRecord:
             pr_feedback_paths=list(data.get("pr_feedback_paths", [])),
             pr_complete_path=data.get("pr_complete_path", ""),
             pr_seen_feedback_keys=list(data.get("pr_seen_feedback_keys", [])),
+            merge_synced_at=data.get("merge_synced_at", ""),
         )
 
 

@@ -44,6 +44,24 @@ class RunStore:
             source = session_dir / name
             if source.is_file():
                 shutil.copy2(source, archive_dir / name)
+        if record.attempts:
+            final_attempt = record.attempts[-1]
+            _copy_if_exists(Path(final_attempt.git_diff_path), archive_dir / "final-diff.patch")
+            _copy_if_exists(Path(final_attempt.review_path), archive_dir / "review.md")
+            _copy_if_exists(Path(final_attempt.pi_session_file), archive_dir / "pi-session.jsonl")
+            _copy_if_exists(Path(final_attempt.pi_stdout_path), archive_dir / "pi-stdout.txt")
+            _copy_if_exists(Path(final_attempt.pi_stderr_path), archive_dir / "pi-stderr.txt")
+            _copy_if_exists(Path(final_attempt.vet_output_path), archive_dir / "vet-output.json")
+        for key, name in (
+            ("discovery_context", "discovery-context.md"),
+            ("plan", "plan.md"),
+            ("completed", "completed.md"),
+        ):
+            path = record.artifacts.get(key, "")
+            if path:
+                _copy_if_exists(Path(path), archive_dir / name)
+        for index, feedback_path in enumerate(record.pr_feedback_paths, 1):
+            _copy_if_exists(Path(feedback_path), archive_dir / f"pr-feedback-{index:03d}.md")
         record_path = archive_dir / "run-record.json"
         if not record_path.exists():
             write_json(record_path, record.to_dict(), redact=False)
@@ -104,6 +122,13 @@ class RunStore:
         with transition_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(entry, sort_keys=True) + "\n")
         return updated
+
+
+def _copy_if_exists(source: Path, destination: Path) -> None:
+    # Relative paths ("f", ".sessions/...") would resolve against the CWD and
+    # could copy unrelated files; learning inputs are recorded as absolute paths.
+    if source.is_absolute() and source.is_file():
+        shutil.copy2(source, destination)
 
 
 def _parse_iso(value: str) -> datetime:
