@@ -319,7 +319,9 @@ class DspyReasoningPrograms:
         planner: Any | None = None,
         reviewer: Any | None = None,
         learning_extractor: Any | None = None,
+        discovery_max_iters: int = 12,
     ) -> None:
+        self._discovery_max_iters = discovery_max_iters
         self._discovery = discovery or DiscoveryProgram()
         self._planner = planner or PlanningProgram()
         self._reviewer = reviewer or ReviewProgram()

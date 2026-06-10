@@ -80,6 +80,32 @@ def test_workspace_config_preserves_pr_lifecycle_fields():
     assert restored == config
 
 
+def test_workspace_config_has_reasoning_reliability_knobs():
+    config = default_workspace_config(
+        name="demo", repo_path="/tmp/demo", product_description="demo product"
+    )
+    assert config.dspy_num_retries == 3
+    assert config.discovery_max_iters == 12
+
+
+def test_workspace_config_rejects_negative_dspy_num_retries():
+    config = default_workspace_config("demo", "/repo", "Demo")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        WorkspaceConfig.from_dict({**config.to_dict(), "dspy_num_retries": -1})
+
+    assert "dspy_num_retries" in str(exc.value)
+
+
+def test_workspace_config_rejects_zero_discovery_max_iters():
+    config = default_workspace_config("demo", "/repo", "Demo")
+
+    with pytest.raises(WorkspaceConfigError) as exc:
+        WorkspaceConfig.from_dict({**config.to_dict(), "discovery_max_iters": 0})
+
+    assert "discovery_max_iters" in str(exc.value)
+
+
 def test_run_record_preserves_typed_nested_records():
     attempt = AttemptRecord(
         number=1,

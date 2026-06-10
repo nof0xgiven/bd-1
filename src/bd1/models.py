@@ -95,6 +95,8 @@ class WorkspaceConfig:
     pr_base_branch: str = ""
     pr_draft: bool = False
     pr_comment_ignore_authors: list[str] = field(default_factory=list)
+    dspy_num_retries: int = 3
+    discovery_max_iters: int = 12
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -107,6 +109,12 @@ class WorkspaceConfig:
             raise WorkspaceConfigError(
                 f"Unknown workspace config key(s): {', '.join(unknown_keys)}"
             )
+        retries = data.get("dspy_num_retries", 3)
+        max_iters = data.get("discovery_max_iters", 12)
+        if not isinstance(retries, int) or retries < 0:
+            raise WorkspaceConfigError("dspy_num_retries must be an integer >= 0")
+        if not isinstance(max_iters, int) or max_iters < 1:
+            raise WorkspaceConfigError("discovery_max_iters must be an integer >= 1")
         return cls(**data)
 
 
