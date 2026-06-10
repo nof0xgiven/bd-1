@@ -28,12 +28,29 @@ PROFILE_ARTIFACTS = {
     "rules": "rules.md",
     "product": "product.md",
 }
+PROFILE_WARNING_FILE = "profile-warning.md"
+PROFILE_DEGRADED_NOTICE = (
+    "agentic profiling failed, keyword fallback used — see .artifacts/profile-warning.md"
+)
+# Evidence fed to the LM: these tools cap prompt size and skip binary blobs.
+PROFILE_TEXT_SUFFIXES = frozenset(
+    {".md", ".rst", ".txt", ".toml", ".yaml", ".yml", ".json", ".py", ".cfg", ".ini"}
+)
+PROFILE_EXCERPT_LIMIT = 4000
+PROFILE_EXCERPT_BUDGET = 150_000
 
 
 @dataclass(frozen=True)
 class WorkspaceAddResult:
     config: WorkspaceConfig
     guidance: str
+    profile_warning: str = ""
+
+
+@dataclass(frozen=True)
+class ProfileResult:
+    written: tuple[Path, ...]
+    warning: str = ""
 
 
 @dataclass(frozen=True)
@@ -74,7 +91,9 @@ def add_workspace(
     )
     write_workspace_config(repo_path, config)
     # The factory takes the freshly built config: it does not exist before here.
-    profile_workspace(config, reasoning=reasoning_factory(config) if reasoning_factory else None)
+    profile_result = profile_workspace(
+        config, reasoning=reasoning_factory(config) if reasoning_factory else None
+    )
     active_registry.add(config)
 
     guidance = (
@@ -82,32 +101,41 @@ def add_workspace(
         ".bd-1.toml and .artifacts/. "
         "Learnings and examples are stored globally under BD1_HOME."
     )
-    return WorkspaceAddResult(config=config, guidance=guidance)
+    if profile_result.warning:
+        guidance = f"{guidance} Warning: {profile_result.warning}"
+    return WorkspaceAddResult(
+        config=config, guidance=guidance, profile_warning=profile_result.warning
+    )
 
 
-def profile_workspace(config: WorkspaceConfig, reasoning=None) -> list[Path]:
+def profile_workspace(config: WorkspaceConfig, reasoning=None) -> ProfileResult:
     repo_path = Path(config.repo_path).expanduser().resolve()
     ensure_workspace_dirs(repo_path)
     sources = _read_profile_sources(repo_path)
+    warning_path = repo_path / ".artifacts" / PROFILE_WARNING_FILE
 
     profile: dict[str, str] | None = None
+    warning = ""
     if reasoning is not None:
         try:
             profile = _agentic_profile(repo_path, config, sources, reasoning)
+            warning_path.unlink(missing_ok=True)
         except Exception as exc:
             # A configured-but-unusable LM must not abort `workspace add`;
             # the keyword heuristic is the documented fallback.
             write_text(
-                repo_path / ".artifacts" / "profile-warning.md",
+                warning_path,
                 f"Agentic profiling failed; keyword fallback used.\n\n{exc}\n",
             )
+            warning = PROFILE_DEGRADED_NOTICE
     if profile is None:
         profile = _keyword_profile(config, sources)
 
-    written = []
-    for key, filename in PROFILE_ARTIFACTS.items():
-        written.append(write_text(repo_path / ".artifacts" / filename, profile[key]))
-    return written
+    written = tuple(
+        write_text(repo_path / ".artifacts" / filename, profile[key])
+        for key, filename in PROFILE_ARTIFACTS.items()
+    )
+    return ProfileResult(written=written, warning=warning)
 
 
 def _agentic_profile(
@@ -117,9 +145,19 @@ def _agentic_profile(
     reasoning,
 ) -> dict[str, str]:
     tree = RepoTools(repo_path).list_tree()
-    excerpts = "\n\n".join(
-        f"## {source.relative_path}\n\n{source.text[:4000]}" for source in sources
-    )
+    sections: list[str] = []
+    used = 0
+    omitted = 0
+    for index, source in enumerate(sources):
+        section = f"## {source.relative_path}\n\n{source.text[:PROFILE_EXCERPT_LIMIT]}"
+        if used + len(section) > PROFILE_EXCERPT_BUDGET:
+            omitted = len(sources) - index
+            break
+        sections.append(section)
+        used += len(section)
+    if omitted:
+        sections.append(f"... truncated: {omitted} more sources omitted")
+    excerpts = "\n\n".join(sections)
     output = reasoning.profile(
         repo_evidence=f"# File tree\n{tree}\n\n# Key files\n{excerpts}",
         product_description=config.product_description,
@@ -191,6 +229,8 @@ def _read_profile_sources(repo: Path) -> list[SourceEvidence]:
     docs = repo / "docs"
     if docs.is_dir():
         for path in sorted(item for item in docs.rglob("*") if item.is_file()):
+            if path.suffix.lower() not in PROFILE_TEXT_SUFFIXES:
+                continue  # binary/unknown formats become mojibake, not evidence
             sources.append(SourceEvidence(path.relative_to(repo).as_posix(), _read_text(path)))
 
     return [source for source in sources if source.text.strip()]

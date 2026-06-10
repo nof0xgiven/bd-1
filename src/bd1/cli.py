@@ -21,7 +21,12 @@ from bd1.paths import global_state_dir
 from bd1.registry import WorkspaceRegistry
 from bd1.run_index import RunIndex
 from bd1.run_store import RunStore, now_iso
-from bd1.workspace import add_workspace, profile_workspace
+from bd1.workspace import (
+    PROFILE_DEGRADED_NOTICE,
+    PROFILE_WARNING_FILE,
+    add_workspace,
+    profile_workspace,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -122,6 +127,8 @@ def _handle_workspace(argparse_namespace: argparse.Namespace, registry: Workspac
             registry=registry,
             reasoning_factory=reasoning_factory,
         )
+        if result.profile_warning:
+            print(f"warning: {result.profile_warning}", file=sys.stderr)
         print(result.guidance)
         return 0
 
@@ -135,7 +142,9 @@ def _handle_workspace(argparse_namespace: argparse.Namespace, registry: Workspac
         reasoning = None
         if argparse_namespace.profile == "agentic":
             reasoning = _build_profile_reasoning(config)
-        profile_workspace(config, reasoning=reasoning)
+        result = profile_workspace(config, reasoning=reasoning)
+        if result.warning:
+            print(f"warning: {result.warning}", file=sys.stderr)
         print(f"Profile artifacts written for workspace {config.name}")
         return 0
 
@@ -144,10 +153,20 @@ def _handle_workspace(argparse_namespace: argparse.Namespace, registry: Workspac
 
 
 def _build_profile_reasoning(config: WorkspaceConfig):
+    """Build reasoning for profiling, degrading to the keyword fallback on ANY error.
+
+    A missing dspy_model (doctor reports it) or a dspy construction failure must
+    never abort `workspace add` after the config was written.
+    """
     try:
         return _build_reasoning(config)
-    except WorkspaceConfigError:
-        return None  # keyword fallback; doctor reports the missing dspy_model
+    except Exception as exc:
+        write_text(
+            Path(config.repo_path) / ".artifacts" / PROFILE_WARNING_FILE,
+            f"Agentic profiling unavailable; keyword fallback used.\n\n{exc}\n",
+        )
+        print(f"warning: {PROFILE_DEGRADED_NOTICE}", file=sys.stderr)
+        return None
 
 
 def resolve_workspace(

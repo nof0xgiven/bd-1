@@ -153,6 +153,85 @@ def test_workspace_add_profile_keyword_skips_reasoning(tmp_path, init_git_repo, 
     assert "Template profile." not in product
 
 
+class _ExplodingProfiler:
+    def profile(self, **kwargs):
+        raise RuntimeError("LM down")
+
+
+def _add_demo_workspace_args(repo):
+    return [
+        "workspace",
+        "add",
+        "--name",
+        "demo",
+        "--repo",
+        str(repo),
+        "--product",
+        "Demo product",
+    ]
+
+
+def test_workspace_add_and_profile_warn_on_stderr_when_profiling_degrades(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+    monkeypatch.setattr("bd1.cli._build_reasoning", lambda config: _ExplodingProfiler())
+
+    assert main(_add_demo_workspace_args(repo)) == 0
+    captured = capsys.readouterr()
+    assert "warning: agentic profiling failed, keyword fallback used" in captured.err
+    assert ".artifacts/profile-warning.md" in captured.err
+    assert "keyword fallback" in captured.out
+    assert (repo / ".artifacts" / "profile-warning.md").exists()
+
+    assert main(["workspace", "profile", "demo"]) == 0
+    captured = capsys.readouterr()
+    assert "warning: agentic profiling failed, keyword fallback used" in captured.err
+    assert "Profile artifacts written for workspace demo" in captured.out
+
+
+def test_workspace_profiling_falls_back_when_reasoning_cannot_be_built(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+
+    def _raise(config):
+        raise Bd1Error("dspy_model missing")
+
+    monkeypatch.setattr("bd1.cli._build_reasoning", _raise)
+
+    assert main(_add_demo_workspace_args(repo)) == 0
+    captured = capsys.readouterr()
+    assert "warning: agentic profiling failed, keyword fallback used" in captured.err
+    warning = (repo / ".artifacts" / "profile-warning.md").read_text(encoding="utf-8")
+    assert "dspy_model missing" in warning
+    assert "Demo product" in (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
+
+    assert main(["workspace", "profile", "demo"]) == 0
+    captured = capsys.readouterr()
+    assert "warning: agentic profiling failed, keyword fallback used" in captured.err
+
+
+def test_workspace_add_survives_reasoning_construction_crash(
+    tmp_path, init_git_repo, monkeypatch, capsys
+):
+    repo = init_git_repo(tmp_path / "repo")
+    monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))
+
+    def _crash(config):
+        raise RuntimeError("dspy import exploded")
+
+    monkeypatch.setattr("bd1.cli._build_reasoning", _crash)
+
+    assert main(_add_demo_workspace_args(repo)) == 0
+    captured = capsys.readouterr()
+    assert "warning: agentic profiling failed, keyword fallback used" in captured.err
+    assert (repo / ".artifacts" / "profile-warning.md").exists()
+    assert (repo / ".artifacts" / "product.md").exists()
+
+
 def test_doctor_reports_failures_with_nonzero_exit(tmp_path, init_git_repo, monkeypatch, capsys):
     repo = init_git_repo(tmp_path / "repo")
     monkeypatch.setenv("BD1_HOME", str(tmp_path / "state"))

@@ -119,12 +119,13 @@ def test_profile_workspace_prefers_reasoning_when_provided(tmp_path, init_git_re
     )
     profiler = _RecordingProfiler()
 
-    written = profile_workspace(config, reasoning=profiler)
+    result = profile_workspace(config, reasoning=profiler)
 
     assert (repo / ".artifacts" / "architecture.md").read_text(
         encoding="utf-8"
     ) == "agentic architecture"
-    assert len(written) == 6
+    assert len(result.written) == 6
+    assert result.warning == ""
     assert profiler.calls and "demo product" in profiler.calls[0][1]
 
 
@@ -149,10 +150,12 @@ def test_profile_workspace_falls_back_when_reasoning_fails(tmp_path, init_git_re
         def profile(self, **kwargs):
             raise RuntimeError("LM down")
 
-    written = profile_workspace(config, reasoning=_Exploding())
+    result = profile_workspace(config, reasoning=_Exploding())
 
-    assert len(written) == 6
+    assert len(result.written) == 6
+    assert "profile-warning.md" in result.warning
     assert (repo / ".artifacts" / "profile-warning.md").exists()
+    assert "LM down" in (repo / ".artifacts" / "profile-warning.md").read_text(encoding="utf-8")
     assert "demo product" in (repo / ".artifacts" / "product.md").read_text(encoding="utf-8")
 
 
@@ -175,3 +178,81 @@ def test_add_workspace_passes_factory_built_reasoning(tmp_path, init_git_repo):
 
     assert [config.name for config in factory_configs] == ["demo"]
     assert (repo / ".artifacts" / "rules.md").read_text(encoding="utf-8") == "agentic rules"
+
+
+def test_add_workspace_surfaces_profile_warning_in_result(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+
+    class _Exploding:
+        def profile(self, **kwargs):
+            raise RuntimeError("LM down")
+
+    result = add_workspace(
+        "demo",
+        repo,
+        "Demo product",
+        registry=WorkspaceRegistry(tmp_path / "state"),
+        reasoning_factory=lambda config: _Exploding(),
+    )
+
+    assert "profile-warning.md" in result.profile_warning
+    assert "keyword fallback" in result.guidance
+    assert (repo / ".artifacts" / "profile-warning.md").exists()
+
+
+def test_profile_workspace_excludes_binary_docs_from_evidence(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    docs = repo / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("A textual guide.\n", encoding="utf-8")
+    (docs / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+    profiler = _RecordingProfiler()
+
+    profile_workspace(config, reasoning=profiler)
+
+    repo_evidence = profiler.calls[0][0]
+    assert "## docs/guide.md" in repo_evidence
+    assert "## docs/diagram.png" not in repo_evidence
+
+
+def test_profile_workspace_caps_excerpt_budget_with_truncation_note(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    docs = repo / "docs"
+    docs.mkdir()
+    for index in range(45):
+        (docs / f"doc-{index:02d}.md").write_text("x" * 4500, encoding="utf-8")
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+    profiler = _RecordingProfiler()
+
+    result = profile_workspace(config, reasoning=profiler)
+
+    repo_evidence = profiler.calls[0][0]
+    assert len(repo_evidence) < 200_000
+    assert "more sources omitted" in repo_evidence
+    assert "## docs/doc-00.md" in repo_evidence
+    assert "## docs/doc-44.md" not in repo_evidence
+    assert result.warning == ""
+
+
+def test_profile_workspace_unlinks_stale_warning_on_success(tmp_path, init_git_repo):
+    repo = init_git_repo(tmp_path / "repo")
+    config = default_workspace_config(
+        name="demo", repo_path=str(repo), product_description="demo product"
+    )
+
+    class _Exploding:
+        def profile(self, **kwargs):
+            raise RuntimeError("LM down")
+
+    profile_workspace(config, reasoning=_Exploding())
+    assert (repo / ".artifacts" / "profile-warning.md").exists()
+
+    result = profile_workspace(config, reasoning=_RecordingProfiler())
+
+    assert result.warning == ""
+    assert not (repo / ".artifacts" / "profile-warning.md").exists()
