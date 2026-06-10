@@ -12,7 +12,13 @@ from bd1.models import (
     RunState,
     WorkspaceConfig,
 )
-from bd1.paths import make_run_id, slugify
+from bd1.paths import global_state_dir, make_run_id, slugify
+
+
+def test_global_state_dir_resolves_relative_bd1_home(monkeypatch):
+    monkeypatch.setenv("BD1_HOME", "relative-state-dir")
+
+    assert global_state_dir().is_absolute()
 
 
 def test_slugify_and_run_id_are_stable():

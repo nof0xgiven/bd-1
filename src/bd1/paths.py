@@ -8,7 +8,9 @@ from pathlib import Path
 
 
 def global_state_dir() -> Path:
-    return Path(os.environ.get("BD1_HOME", Path.home() / ".bd-1")).expanduser()
+    # Resolve so a relative BD1_HOME cannot leak relative paths into every
+    # derived location (archives, learning stores, run pointers).
+    return Path(os.environ.get("BD1_HOME", Path.home() / ".bd-1")).expanduser().resolve()
 
 
 def slugify(value: str, max_length: int = 60) -> str:
