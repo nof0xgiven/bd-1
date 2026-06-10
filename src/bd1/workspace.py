@@ -34,7 +34,21 @@ PROFILE_DEGRADED_NOTICE = (
 )
 # Evidence fed to the LM: these tools cap prompt size and skip binary blobs.
 PROFILE_TEXT_SUFFIXES = frozenset(
-    {".md", ".rst", ".txt", ".toml", ".yaml", ".yml", ".json", ".py", ".cfg", ".ini"}
+    {
+        ".md",
+        ".mdx",
+        ".markdown",
+        ".adoc",
+        ".rst",
+        ".txt",
+        ".toml",
+        ".yaml",
+        ".yml",
+        ".json",
+        ".py",
+        ".cfg",
+        ".ini",
+    }
 )
 PROFILE_EXCERPT_LIMIT = 4000
 PROFILE_EXCERPT_BUDGET = 150_000

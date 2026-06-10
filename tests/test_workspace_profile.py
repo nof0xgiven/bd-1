@@ -205,6 +205,7 @@ def test_profile_workspace_excludes_binary_docs_from_evidence(tmp_path, init_git
     docs = repo / "docs"
     docs.mkdir()
     (docs / "guide.md").write_text("A textual guide.\n", encoding="utf-8")
+    (docs / "intro.mdx").write_text("An MDX intro page.\n", encoding="utf-8")
     (docs / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
     config = default_workspace_config(
         name="demo", repo_path=str(repo), product_description="demo product"
@@ -215,6 +216,7 @@ def test_profile_workspace_excludes_binary_docs_from_evidence(tmp_path, init_git
 
     repo_evidence = profiler.calls[0][0]
     assert "## docs/guide.md" in repo_evidence
+    assert "## docs/intro.mdx" in repo_evidence
     assert "## docs/diagram.png" not in repo_evidence
 
 
