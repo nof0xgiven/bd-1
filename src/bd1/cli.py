@@ -15,7 +15,7 @@ from bd1.evidence import collect_evidence
 from bd1.feedback import write_feedback, write_feedback_in_dir
 from bd1.git import branch_exists, delete_branch, prune_worktrees, remove_worktree
 from bd1.learning import ExampleStore, LearningStore, learning_records_from_output
-from bd1.models import FeedbackRecord, RunState, WorkspaceConfig
+from bd1.models import FeedbackRecord, RunRecord, RunState, WorkspaceConfig
 from bd1.orchestrator import Orchestrator
 from bd1.paths import global_state_dir
 from bd1.registry import WorkspaceRegistry
@@ -72,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subcommands.add_parser("doctor")
     doctor.add_argument("--workspace", default=None)
 
+    sync = subcommands.add_parser("sync")
+    sync.add_argument("--workspace", default=None)
+
     return parser
 
 
@@ -107,6 +110,8 @@ def main(argv: list[str] | None = None) -> int:
             return _handle_feedback(args, registry, state_dir)
         if args.command == "doctor":
             return _handle_doctor(args, registry)
+        if args.command == "sync":
+            return _handle_sync(args, registry, state_dir)
         return 0
     except Bd1Error as exc:
         print(str(exc), file=sys.stderr)
@@ -346,6 +351,47 @@ def _handle_doctor(args: argparse.Namespace, registry: WorkspaceRegistry) -> int
     for result in results:
         print(f"{'ok ' if result.ok else 'FAIL'} {result.name}: {result.detail}")
     return 0 if all(result.ok for result in results) else 1
+
+
+def _handle_sync(args: argparse.Namespace, registry: WorkspaceRegistry, state_dir: Path) -> int:
+    from bd1.subprocesses import run_command
+    from bd1.sync import eligible, sync_runs
+
+    run_store = RunStore(state_dir)
+    records = []
+    # `state_dir / "runs"` holds pointer files and archive dirs; "*.json"
+    # matches only the pointers.
+    for pointer in sorted((state_dir / "runs").glob("*.json")):
+        try:
+            records.append(run_store.read_by_id(pointer.stem))
+        except Bd1Error:
+            continue
+    by_workspace: dict[str, list[RunRecord]] = {}
+    for record in records:
+        by_workspace.setdefault(record.workspace, []).append(record)
+    selected = [args.workspace] if args.workspace else sorted(by_workspace)
+    checked = 0
+    learned: list[str] = []
+    skipped: dict[str, str] = {}
+    for name in selected:
+        config = registry.get(name)
+        workspace_records = by_workspace.get(name, [])
+        if not any(eligible(record) for record in workspace_records):
+            continue
+        reasoning = _build_reasoning(config)
+        outcome = sync_runs(
+            run_store=run_store,
+            records=workspace_records,
+            config=config,
+            reasoning=reasoning,
+            runner=run_command,
+            global_root=state_dir,
+        )
+        checked += outcome.checked
+        learned.extend(outcome.learned)
+        skipped.update(outcome.skipped)
+    print(json.dumps({"checked": checked, "learned": learned, "skipped": skipped}, sort_keys=True))
+    return 0
 
 
 def _build_reasoning_for_run(workspace_name: str, registry: WorkspaceRegistry):

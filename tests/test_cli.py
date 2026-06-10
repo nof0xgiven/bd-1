@@ -1,6 +1,7 @@
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -596,3 +597,45 @@ def test_clean_handles_already_missing_worktree(tmp_path, init_git_repo, monkeyp
     assert clean_output["worktree_removed"] is False
     assert clean_output["branch_deleted"] is False
     assert (state / "runs" / "run-1" / "run-record.json").exists()
+
+
+def test_sync_cli_learns_from_merged_pr(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    monkeypatch.setenv("BD1_HOME", str(state))
+    monkeypatch.setenv("BD1_REASONING", "template")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    WorkspaceRegistry(state).add(default_workspace_config("demo", str(repo), "Demo", "", "main"))
+    run_store = RunStore(state)
+    record = RunRecord(
+        run_id="run-1",
+        workspace="demo",
+        task="Fix bug",
+        base_commit="base",
+        branch="bd-1/run-1",
+        worktree=str(tmp_path / "gone-worktree"),
+        state=RunState.COMPLETE,
+        created_at="2026-06-10T00:00:00Z",
+        updated_at="2026-06-10T00:00:00Z",
+        final_verdict="PASS",
+        pr_number=7,
+    )
+    run_store.write_archived(record)
+    archive = run_store.archive_dir("run-1")
+    (archive / "final-diff.patch").write_text("diff text", encoding="utf-8")
+    (archive / "review.md").write_text("review text", encoding="utf-8")
+
+    def fake_run_command(command, cwd, env=None, timeout=None):
+        assert command[:3] == ["gh", "pr", "view"]
+        payload = json.dumps({"state": "MERGED", "mergedAt": "2026-06-10T10:00:00Z"})
+        return SimpleNamespace(exit_code=0, stdout=payload, stderr="")
+
+    monkeypatch.setattr("bd1.subprocesses.run_command", fake_run_command)
+
+    assert main(["sync"]) == 0
+
+    output = json.loads(capsys.readouterr().out)
+    assert output["checked"] == 1
+    assert output["learned"] == ["run-1"]
+    assert output["skipped"] == {}
+    assert run_store.read_by_id("run-1").merge_synced_at != ""
