@@ -419,9 +419,16 @@ class DspyReasoningPrograms:
             vet_interpretation=vet_json,
             workspace_artifacts=workspace_artifacts,
         )
+        p1 = _list_or_default(prediction, "p1_critical")
+        p2 = _list_or_default(prediction, "p2_major")
+        p3 = _list_or_default(prediction, "p3_minor")
+        raw_verdict = _text_or_default(prediction, "verdict")
+        verdict = "FAIL" if p1 or p2 else raw_verdict
+        markdown = _required_markdown(prediction, "review_markdown", "Review")
         return ReviewOutput(
-            verdict=_text_or_default(prediction, "verdict"),
-            markdown=_required_markdown(prediction, "review_markdown", "Review"),
+            verdict=verdict,
+            markdown=markdown + _format_findings_section(p1, p2, p3),
+            raw_verdict=raw_verdict,
         )
 
     def learn(
@@ -470,6 +477,17 @@ def _required_markdown(prediction: Any, name: str, program: str) -> str:
 def _list_or_default(prediction: Any, name: str) -> list[Any]:
     value = getattr(prediction, name, None)
     return value if isinstance(value, list) else []
+
+
+def _format_findings_section(p1: list[Any], p2: list[Any], p3: list[Any]) -> str:
+    sections = [
+        f"### {title}\n" + "\n".join(f"- {item}" for item in items)
+        for title, items in (("P1 Critical", p1), ("P2 Major", p2), ("P3 Minor", p3))
+        if items
+    ]
+    if not sections:
+        return ""
+    return "\n\n## Findings\n" + "\n".join(sections)
 
 
 def _format_learning_prediction(prediction: Any) -> str:

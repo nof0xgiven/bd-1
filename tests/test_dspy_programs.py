@@ -202,6 +202,81 @@ def test_review_raises_on_empty_markdown_and_defaults_missing_verdict_to_fail():
     assert "None" not in output.markdown
 
 
+def _run_review(programs):
+    return programs.review(
+        task="Fix bug",
+        discovery_context="ctx",
+        implementation_plan="plan",
+        pi_completion_summary="done",
+        command_output_summary="ok",
+        git_diff="diff",
+        vet_json="{}",
+        workspace_artifacts="rules",
+    )
+
+
+def test_review_forces_fail_when_p1_or_p2_findings_present():
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(
+            SimpleNamespace(verdict="PASS", review_markdown="# Review", p1_critical=["bug"])
+        )
+    )
+    output = _run_review(programs)
+
+    assert output.verdict == "FAIL"
+    assert output.raw_verdict == "PASS"
+    assert "bug" in output.markdown
+
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(
+            SimpleNamespace(verdict="PASS", review_markdown="# Review", p2_major=["dup logic"])
+        )
+    )
+    output = _run_review(programs)
+
+    assert output.verdict == "FAIL"
+    assert "dup logic" in output.markdown
+
+
+def test_review_keeps_pass_with_only_p3_findings():
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(
+            SimpleNamespace(verdict="PASS", review_markdown="# Review", p3_minor=["nit"])
+        )
+    )
+    output = _run_review(programs)
+
+    assert output.verdict == "PASS"
+    assert "nit" in output.markdown
+
+
+def test_review_markdown_carries_structured_findings_section():
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(
+            SimpleNamespace(
+                verdict="FAIL",
+                review_markdown="# Review",
+                p1_critical=["broken auth"],
+                p2_major=["duplicated logic"],
+                p3_minor=["typo"],
+            )
+        )
+    )
+    output = _run_review(programs)
+
+    assert "## Findings" in output.markdown
+    assert "### P1 Critical\n- broken auth" in output.markdown
+    assert "### P2 Major\n- duplicated logic" in output.markdown
+    assert "### P3 Minor\n- typo" in output.markdown
+
+    programs = DspyReasoningPrograms(
+        reviewer=_stub_program(SimpleNamespace(verdict="PASS", review_markdown="# Review"))
+    )
+    output = _run_review(programs)
+
+    assert "## Findings" not in output.markdown
+
+
 def test_learn_tolerates_missing_attributes_with_empty_defaults():
     programs = DspyReasoningPrograms(learning_extractor=_stub_program(SimpleNamespace()))
 
