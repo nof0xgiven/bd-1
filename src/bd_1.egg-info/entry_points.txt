@@ -1,3 +1,0 @@
-[console_scripts]
-bd-1 = bd1.cli:main
-bd1-pi-history-loader = bd1.history_loader:main

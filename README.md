@@ -18,7 +18,7 @@ The PR lifecycle requires GitHub CLI `gh` (>= 2.59) installed, authenticated, an
 Check the environment before running tasks:
 
 ```bash
-uv run bd-1 doctor --workspace ava-realtime
+uv run bd-1 doctor --workspace your-app
 ```
 
 `bd-1 doctor` verifies the configured binaries (`git`, `pi`, `vet`, `gh`), the `gh` version (>= 2.59), and that `dspy_model` is configured. `bd-1 run` repeats the binary-presence part of this preflight before touching the repo and refuses to start when an executable is missing.
@@ -29,28 +29,28 @@ Run this from the bd-1 repo or anywhere with the CLI available:
 
 ```bash
 uv run bd-1 workspace add \
-  --name ava-realtime \
-  --repo /Users/ava/main/projects/ava-realtime \
+  --name your-app \
+  --repo /path/to/your-app \
   --product "Realtime LiveKit/Runway/Gemini/OpenAI avatar workspace"
 ```
 
 The command writes `.bd-1.toml` plus profile artifacts under `.artifacts/`. Profiling is agentic by default: a DSPy `ProfileWorkspace` program reads capped, text-only repo evidence and writes the profile docs. If the agentic path is unavailable (no `dspy_model`, construction failure), bd-1 degrades to the keyword fallback and prints a visible warning plus a `.artifacts/` warning file. Force a mode with `--profile {agentic,keyword}` on both `workspace add` and `workspace profile`:
 
 ```bash
-uv run bd-1 workspace profile ava-realtime --profile keyword
+uv run bd-1 workspace profile your-app --profile keyword
 ```
 
 Review and commit the generated workspace files before running tasks:
 
 ```bash
-git -C /Users/ava/main/projects/ava-realtime add .bd-1.toml .artifacts
-git -C /Users/ava/main/projects/ava-realtime commit -m "chore: add bd-1 workspace artifacts"
+git -C /path/to/your-app add .bd-1.toml .artifacts
+git -C /path/to/your-app commit -m "chore: add bd-1 workspace artifacts"
 ```
 
 `bd-1` refuses to create a task worktree from a dirty base repo. Check first:
 
 ```bash
-git -C /Users/ava/main/projects/ava-realtime status --short
+git -C /path/to/your-app status --short
 ```
 
 ## Run a task
@@ -64,7 +64,7 @@ uv run bd-1 run "Make a small scoped change"
 From another directory, pass the workspace name:
 
 ```bash
-uv run bd-1 run --workspace ava-realtime "Make a small scoped change"
+uv run bd-1 run --workspace your-app "Make a small scoped change"
 ```
 
 Runtime flow:
@@ -132,7 +132,7 @@ pr-feedback-001.md (one per PR feedback round)
 
 ```bash
 uv run bd-1 sync                      # sweep all workspaces
-uv run bd-1 sync --workspace ava-realtime
+uv run bd-1 sync --workspace your-app
 ```
 
 The output is a JSON summary (`checked`, `learned`, `skipped`). Unreachable PRs, stale records, and deregistered workspaces are reported in `skipped` without aborting the sweep. There is no webhook listener yet: run `bd-1 sync` periodically (cron or CI) until webhook support lands.
