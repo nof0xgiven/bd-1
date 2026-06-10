@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: bd-1
+Version: 0.1.0
+Summary: Local compounding engineering pipeline CLI
+Requires-Python: >=3.11
+Requires-Dist: dspy-ai>=3.0.0
+Requires-Dist: tomli-w>=1.0.0

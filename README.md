@@ -221,7 +221,7 @@ vet "history loader contract check" \
 
 ## Intentional divergences from the original spec
 
-The original design docs under `docs/` are kept as historical records. Two owner-approved deviations and one CLI-shape difference are deliberate:
+Two owner-approved deviations and one CLI-shape difference are deliberate:
 
 1. **Global learning store.** Learnings and DSPy examples live in `~/.bd-1/learning/<workspace>/`, not in-repo `.learning/` / `.examples/` as the original requirement says. They must survive task-worktree cleanup and never dirty task branches.
 2. **Polling instead of webhooks.** Merge-triggered learning is `bd-1 sync` polling `gh pr view`, a deliberate stand-in for the original webhook design. Webhook support is backlog; run `bd-1 sync` on a schedule until it lands.
