@@ -69,6 +69,13 @@ def test_read_file_refuses_secret_files(repo):
     assert "sk-12345678901234567890" not in tools.search_text("API_KEY")
 
 
+def test_search_text_rejects_bytes_pattern(repo):
+    # re.compile(b"abc") succeeds, but searching str lines would raise
+    # TypeError; the guard must turn this into an observation string.
+    out = RepoTools(repo).search_text(b"abc")
+    assert "error" in out.lower()
+
+
 def test_read_file_tolerates_pathologically_long_name(repo):
     # ENAMETOOLONG must become an observation string, not an OSError.
     out = RepoTools(repo).read_file("x" * 5000)

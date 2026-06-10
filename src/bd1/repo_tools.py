@@ -82,6 +82,10 @@ class RepoTools:
 
     def search_text(self, pattern: str, glob: str = "") -> str:
         """Regex search across repository files; returns path:line: text matches."""
+        # A bytes pattern compiles fine but raises TypeError when matched
+        # against str lines, so reject non-str patterns up front.
+        if not isinstance(pattern, str):
+            return f"error: invalid regex: pattern must be a string, got {type(pattern).__name__}"
         try:
             compiled = re.compile(pattern)
         except (re.error, TypeError) as exc:
