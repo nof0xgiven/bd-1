@@ -86,6 +86,15 @@ Runtime flow:
 11. Loop back to Pi when PR feedback requires changes.
 12. Save completion, PR, blocker, review, and learning artifacts.
 
+## Where the prompts live
+
+There is no prompt directory; the live prompts ship in code:
+
+- **Reasoning instructions** (discovery, planning, review, learning, profiling) are DSPy signature docstrings and field descriptions in `src/bd1/dspy_programs.py`. They are seed instructions: DSPy optimizers can tune them later, so they stay tight and declarative.
+- **Coding-agent contracts** (executor, revision, merge-conflict resolution) are the `compile_*_prompt` functions in `src/bd1/orchestrator.py`.
+
+Editing those docstrings, field descriptions, and `compile_*_prompt` functions is the supported way to customize bd-1's behavior.
+
 ## Inspect runs
 
 Print the authoritative run record and refresh the SQLite index:

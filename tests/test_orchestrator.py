@@ -10,7 +10,12 @@ from bd1.config import default_workspace_config
 from bd1.errors import Bd1Error, DirtyRepositoryError, PrError
 from bd1.git import get_status_porcelain
 from bd1.models import RunState
-from bd1.orchestrator import Orchestrator, attempt_session_id, compile_execution_prompt
+from bd1.orchestrator import (
+    Orchestrator,
+    attempt_session_id,
+    compile_execution_prompt,
+    compile_revision_prompt,
+)
 from bd1.pr import PrCheck, PrFeedbackItem, PrResult
 from bd1.run_index import RunIndex
 from tests.fakes import (
@@ -109,6 +114,65 @@ def test_execution_prompt_encodes_tdd_and_proof_doctrine():
     assert "proof" in lower
     assert "do not invent" in lower
     assert "changes made" in lower and "quality validation" in lower
+
+
+OPTIMIZATION_ORDER_LINE = (
+    "Optimize in this order: correctness, domain integrity, testability, simplicity, speed."
+)
+BORING_SOLUTIONS_LINE = (
+    "Prefer boring, explicit solutions over clever ones. "
+    "Prefer minimum sufficient code over speculative architecture."
+)
+
+
+@pytest.mark.parametrize("feedback_kind", ["vet findings", "review feedback", "PR feedback"])
+def test_revision_prompt_contains_revision_contract_clauses(feedback_kind):
+    prompt = compile_revision_prompt(
+        feedback_kind=feedback_kind,
+        feedback_text="The frobnicate helper drops errors silently.",
+        completion_summary_path="/wt/.artifacts/completed/fix.md",
+    )
+
+    assert prompt.startswith("# Revision Contract")
+    assert feedback_kind in prompt
+    assert "The frobnicate helper drops errors silently." in prompt
+    assert "/wt/.artifacts/completed/fix.md" in prompt
+    assert "## Reported feedback" in prompt
+    assert "failing real test first" in prompt
+    assert OPTIMIZATION_ORDER_LINE in prompt
+    assert BORING_SOLUTIONS_LINE in prompt
+    assert "Do not invent" in prompt
+    assert "## Revision" in prompt
+
+
+def test_revision_prompt_scope_guardrail_matches_conflict_contract_phrasing():
+    prompt = compile_revision_prompt(
+        feedback_kind="review feedback",
+        feedback_text="finding",
+        completion_summary_path="/wt/.artifacts/completed/fix.md",
+    )
+    # Compatible with the conflict contract's "do not refactor or add features
+    # beyond what ... require" guardrail — one doctrine, no contradictions.
+    assert "Do not refactor or add features beyond what the feedback requires" in prompt
+
+
+def test_optimization_doctrine_is_shared_between_executor_and_revision_contracts():
+    execution_prompt = compile_execution_prompt(
+        task="Fix bug",
+        discovery_context_path=".artifacts/context/fix.md",
+        plan_path=".artifacts/plans/fix.md",
+        workspace_root="/repo",
+        worktree_root="/worktree",
+        completion_summary_path=".artifacts/completed/fix.md",
+    )
+    revision_prompt = compile_revision_prompt(
+        feedback_kind="vet findings",
+        feedback_text="finding",
+        completion_summary_path=".artifacts/completed/fix.md",
+    )
+    for doctrine in (OPTIMIZATION_ORDER_LINE, BORING_SOLUTIONS_LINE):
+        assert doctrine in execution_prompt
+        assert doctrine in revision_prompt
 
 
 def test_executor_completion_summary_reaches_review_and_keeps_proof_in_file(
@@ -562,10 +626,11 @@ def test_fake_pi_runner_coerces_zero_exit_to_two_when_session_missing(tmp_path, 
 def test_vet_findings_loop_review_failure_loop_and_learning_events(tmp_path, init_git_repo):
     repo = init_git_repo(tmp_path / "repo")
     reasoning = FakeReasoning(["FAIL", "PASS"])
+    pi = FakePiRunner()
     orchestrator = make_orchestrator(
         tmp_path,
         reasoning=reasoning,
-        pi_runner=FakePiRunner(),
+        pi_runner=pi,
         vet_runner=FakeVetRunner([10, 0, 0]),
     )
 
@@ -576,6 +641,16 @@ def test_vet_findings_loop_review_failure_loop_and_learning_events(tmp_path, ini
     assert any("vet findings" in event for event in reasoning.learn_events)
     assert any("review failed" in event for event in reasoning.learn_events)
     assert any("pass" in event for event in reasoning.learn_events)
+
+    vet_retry_prompt = pi.prompts[1]
+    assert "# Revision Contract" in vet_retry_prompt
+    assert "vet findings" in vet_retry_prompt
+    assert "goal_mismatch: Wrong goal" in vet_retry_prompt
+
+    review_retry_prompt = pi.prompts[2]
+    assert "# Revision Contract" in review_retry_prompt
+    assert "review feedback" in review_retry_prompt
+    assert "Verdict: FAIL" in review_retry_prompt
 
 
 @pytest.mark.parametrize("exit_code", [1, 2])
@@ -833,7 +908,10 @@ def test_pr_feedback_loops_back_to_pi_prompt_and_then_completes(tmp_path, init_g
     assert record.pr_feedback_paths == [str(Path(record.worktree) / ".artifacts/pr/fix-bug-1.md")]
     assert record.pr_complete_path.endswith("fix-bug-2-complete.md")
     assert record.pr_seen_feedback_keys == ["ci:tests"]
-    assert "Resolve PR feedback" in pi.prompts[1]
+    pr_retry_prompt = pi.prompts[1]
+    assert "# Revision Contract" in pr_retry_prompt
+    assert "PR feedback" in pr_retry_prompt
+    assert "Resolve PR feedback" in pr_retry_prompt
 
 
 def test_merge_conflict_feedback_uses_focused_resolution_prompt(tmp_path, init_git_repo):
@@ -885,6 +963,7 @@ def test_merge_conflict_feedback_uses_focused_resolution_prompt(tmp_path, init_g
     assert f"git fetch origin {base}" in conflict_prompt
     assert f"origin/{base}" in conflict_prompt
     assert "Resolve PR feedback" in conflict_prompt
+    assert "# Revision Contract" not in conflict_prompt
 
 
 def test_merge_conflict_with_co_arriving_feedback_keeps_feedback_actionable(

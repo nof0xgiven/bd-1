@@ -60,6 +60,41 @@ def test_review_signature_is_binary_without_revision_prompt():
     assert "PASS | FAIL" in DecideReviewOutcome.output_fields["verdict"].json_schema_extra["desc"]
 
 
+def test_discovery_context_package_field_carries_output_template():
+    desc = DiscoverTaskContext.output_fields["context_package_markdown"].json_schema_extra["desc"]
+    for heading in [
+        "# Context Package:",
+        "## Task Understanding",
+        "## Source of Truth",
+        "## Architecture Overview",
+        "## Files to Read",
+        "## Files to Create or Modify",
+        "## Patterns to Follow",
+        "## Constraints and Requirements",
+        "## Potential Gotchas",
+        "## How to Validate",
+        "## Implementation Hints",
+    ]:
+        assert heading in desc
+    # Ambiguities live in Potential Gotchas — same rule as the docstring.
+    assert "ambiguities" in desc
+
+
+def test_plan_markdown_field_carries_output_template():
+    desc = CreateImplementationPlan.output_fields["plan_markdown"].json_schema_extra["desc"]
+    for heading in [
+        "# Implementation Plan:",
+        "## Summary",
+        "## Current-State Analysis",
+        "## Design",
+        "## File-by-File Impact",
+        "## Trade-offs and Alternatives",
+        "## Risks",
+        "## Implementation Order",
+    ]:
+        assert heading in desc
+
+
 def test_signature_docstrings_encode_original_doctrines():
     assert "binary" in DecideReviewOutcome.__doc__.lower()
     assert "production" in DecideReviewOutcome.__doc__.lower()
