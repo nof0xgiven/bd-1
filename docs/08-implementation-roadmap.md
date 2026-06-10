@@ -1,5 +1,7 @@
 # Implementation Roadmap
 
+> **Historical spec.** This document records the original design and is kept as a historical record. Where it conflicts with the implementation, `README.md`, `docs/02-workflow-state-machine.md`, and `docs/06-storage-layout.md` are authoritative. Known divergences: review verdicts are binary `PASS`/`FAIL` (no `REVISE`); learnings and DSPy examples live in the global store `~/.bd-1/learning/<workspace>/`, not in-repo `.learning/`/`.examples/`; merge-triggered learning is `bd-1 sync` polling, not webhooks. See "Intentional divergences from the original spec" in `README.md`.
+
 ## Phase 1: Deterministic orchestration
 
 Build the skeleton before adding intelligence.
@@ -14,12 +16,22 @@ Deliverables:
 - Manual prompt templates wired to Pi
 - Vet invocation
 - Review loop
+- Automated PR publish/update with GitHub CLI
+- PR check and actionable feedback monitoring
+- PR feedback loop back to Pi
 
 Exit criteria:
 
-- One task can go through discovery → plan → execute → vet → review → PR manually.
+- One task can go through discovery → plan → execute → vet → review → automated PR publish/monitor.
 - All artifacts are saved.
 - Failed runs leave useful diagnostics.
+- `COMPLETE` is reached only after PR feedback is clear.
+
+Current status:
+
+- Implemented for the CLI MVP through `src/bd1/pr.py` and orchestrator states from `REVIEW_PASSED` through `PR_READY`.
+- PR artifacts are written under lowercase `.artifacts/pr/`.
+- Post-merge learning is implemented as `bd-1 sync` polling (`gh pr view` + `merge_synced_at`); merge automation and webhook triggers remain future work.
 
 ## Phase 2: Hardened prompts and contracts
 
@@ -63,6 +75,8 @@ Exit criteria:
 
 - Merged PR creates at least one validated learning or a rejected-observations report.
 - Future discovery retrieves relevant learnings.
+
+Merge-triggered learning ships as `bd-1 sync` polling; webhook triggers are not implemented yet.
 
 ## Phase 5: Evaluation datasets
 

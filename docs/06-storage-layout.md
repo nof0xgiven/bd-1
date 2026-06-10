@@ -25,15 +25,6 @@ workspace-root/
     pr/
       <task-name>-01.md
       <task-name>-01-complete.md
-  .learning/
-    learnings/
-      <learning-id>.json
-    index.json
-  .examples/
-    discovery.jsonl
-    planning.jsonl
-    review.jsonl
-    learning.jsonl
   .sessions/
     <run-id>/
       run-record.json
@@ -45,15 +36,42 @@ workspace-root/
 
 ## Global storage
 
-The orchestrator can maintain global state outside repos:
+The orchestrator maintains global state outside repos under `BD1_HOME` (default `~/.bd-1`):
 
 ```text
-.compound/
+<BD1_HOME>/
   workspaces.json
+  runs.db
   runs/
+    <run-id>.json          # pointer to the authoritative run record
+    <run-id>/              # archive written by `bd-1 clean`
+      run-record.json
+      transitions.jsonl
+      final-diff.patch
+      review.md
+      pi-session.jsonl
+      pi-stdout.txt
+      pi-stderr.txt
+      vet-output.json
+      discovery-context.md
+      plan.md
+      completed.md
+      pr-feedback-001.md
+  worktrees/
   compiled-dspy/
   logs/
+  learning/
+    <workspace-name>/
+      learnings/
+        <learning-id>.json
+      learning.jsonl
+      index.json
+      terminal-summary.json
 ```
+
+Learnings and DSPy examples are global per workspace so they survive task
+worktree cleanup and compound across runs. They are not stored inside the
+workspace repository.
 
 ## Naming conventions
 
@@ -81,6 +99,8 @@ If a plan changes due to revision, write:
 ```
 
 Do not overwrite old artifacts unless explicitly working on durable workspace docs.
+
+PR lifecycle artifacts always use the lowercase runtime directory `.artifacts/pr/`. Feedback artifacts capture actionable CI, CodeRabbit, or human review items. Complete artifacts mark that PR checks and review feedback are clear for the monitored PR.
 
 ## Secrets policy
 
