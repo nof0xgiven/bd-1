@@ -31,16 +31,20 @@ class RepoTools:
         if base is None:
             return f"error: path escapes the repository: {subdir}"
         entries: list[str] = []
-        for path in sorted(base.rglob("*")):
-            # Judge skip-dirs by repo-RELATIVE parts: an absolute parent named
-            # "build" or "tmp" must not blank out the entire repository.
-            if any(part in SKIP_DIRS for part in path.relative_to(self.root).parts):
-                continue
-            if path.is_file():
-                entries.append(path.relative_to(self.root).as_posix())
-            if len(entries) >= MAX_TREE_ENTRIES:
-                entries.append(f"... truncated at {MAX_TREE_ENTRIES} entries")
-                break
+        try:
+            for path in sorted(base.rglob("*")):
+                # Judge skip-dirs by repo-RELATIVE parts: an absolute parent named
+                # "build" or "tmp" must not blank out the entire repository.
+                if any(part in SKIP_DIRS for part in path.relative_to(self.root).parts):
+                    continue
+                if self._is_file(path):
+                    entries.append(path.relative_to(self.root).as_posix())
+                if len(entries) >= MAX_TREE_ENTRIES:
+                    entries.append(f"... truncated at {MAX_TREE_ENTRIES} entries")
+                    break
+        except OSError as exc:
+            # e.g. ENAMETOOLONG from a pathological subdir name.
+            return f"error: unable to list {subdir or '.'}: {exc}"
         return "\n".join(entries) if entries else "no files found"
 
     def read_file(self, relative_path: str, start_line: int = 1) -> str:
@@ -48,7 +52,7 @@ class RepoTools:
         path = self._resolve(relative_path)
         if path is None:
             return f"error: path escapes the repository: {relative_path}"
-        if not path.is_file():
+        if not self._is_file(path):
             return f"error: not a file: {relative_path}"
         if SECRET_NAME_RE.search(path.name):
             return f"error: refusing to read potential secret file: {relative_path}"
@@ -61,6 +65,10 @@ class RepoTools:
         except OSError as exc:
             return f"error: unable to read {relative_path}: {exc}"
         lines = text.splitlines()
+        if not lines:
+            return "error: empty file"
+        if begin > len(lines):
+            return f"error: start_line past end of file ({len(lines)} lines)"
         numbered = [f"{index}: {line}" for index, line in enumerate(lines, 1)][begin - 1 :]
         out: list[str] = []
         used = 0
@@ -70,7 +78,7 @@ class RepoTools:
                 out.append(f"... truncated; continue with start_line={begin + len(out)}")
                 break
             out.append(line)
-        return "\n".join(out) if out else "error: empty file"
+        return "\n".join(out)
 
     def search_text(self, pattern: str, glob: str = "") -> str:
         """Regex search across repository files; returns path:line: text matches."""
@@ -84,7 +92,7 @@ class RepoTools:
             return f"error: invalid glob: {exc}"
         results: list[str] = []
         for path in paths:
-            if not path.is_file():
+            if not self._is_file(path):
                 continue
             if any(part in SKIP_DIRS for part in path.relative_to(self.root).parts):
                 continue
@@ -112,6 +120,14 @@ class RepoTools:
                         results.append(f"... truncated at {MAX_SEARCH_RESULTS} matches")
                         return "\n".join(results)
         return "\n".join(results) if results else "no matches"
+
+    @staticmethod
+    def _is_file(path: Path) -> bool:
+        """is_file() that treats stat failures (e.g. ENAMETOOLONG) as 'not a file'."""
+        try:
+            return path.is_file()
+        except OSError:
+            return False
 
     def _resolve(self, relative: str) -> Path | None:
         try:

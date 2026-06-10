@@ -69,6 +69,24 @@ def test_read_file_refuses_secret_files(repo):
     assert "sk-12345678901234567890" not in tools.search_text("API_KEY")
 
 
+def test_read_file_tolerates_pathologically_long_name(repo):
+    # ENAMETOOLONG must become an observation string, not an OSError.
+    out = RepoTools(repo).read_file("x" * 5000)
+    assert "error" in out.lower()
+
+
+def test_list_tree_tolerates_pathologically_long_name(repo):
+    out = RepoTools(repo).list_tree("x" * 5000)
+    assert "error" in out.lower() or "no files found" in out.lower()
+
+
+def test_read_file_reports_start_line_past_eof(repo):
+    out = RepoTools(repo).read_file("src/app.py", start_line=99)
+    assert "error" in out.lower()
+    assert "past end" in out.lower()
+    assert "3" in out  # tells the model how many lines the file has
+
+
 def test_search_text_does_not_follow_symlinks_out_of_repo(repo, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside") / "loot.txt"
     outside.write_text("TOPSECRET_PAYLOAD\n", encoding="utf-8")
